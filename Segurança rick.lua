@@ -1,12 +1,11 @@
 --=============================================================
--- 🛡️ ANTI-VOID v8 + ANTI-FLING — Integração Completa
--- ✓ Correções aplicadas no Anti-Fling
--- ✓ Flag compartilhada pra evitar conflito entre os dois
--- ✓ Cooldown entre detecções
+-- 🛡️ ANTI-VOID v9 + ANTI-FLING — Completo
+-- ✓ Sistema de morte consecutiva (2x em 30s → TP pro local seguro)
+-- ✓ Flag compartilhada entre os dois sistemas
 --=============================================================
 
 --=============================================================
--- 🥊 ANTI-FLING (integrado + corrigido)
+-- 🥊 ANTI-FLING (integrado)
 --=============================================================
 local Services = setmetatable({}, {__index = function(Self, Index)
     local NewService = game:GetService(Index)
@@ -18,14 +17,9 @@ end})
 
 local LocalPlayerAF = Services.Players.LocalPlayer
 
--- 🌐 Flag global compartilhada com o Anti-Void
 getgenv().AntiFlingEmAcao = false
 getgenv().AntiFlingUltimoAviso = 0
-getgenv().AntiFlingCooldown = 0.5   -- segundos entre neutralizações
 
--- ============================================
--- 🥊 Camada 1: Vigia outros players
--- ============================================
 local function PlayerAdded(Player)
     local Detected = false
     local Character
@@ -78,9 +72,6 @@ for _, v in ipairs(Services.Players:GetPlayers()) do
 end
 Services.Players.PlayerAdded:Connect(PlayerAdded)
 
--- ============================================
--- 🥊 Camada 2: Vigia você mesmo (com flag)
--- ============================================
 local LastPosition = nil
 
 Services.RunService.Heartbeat:Connect(function()
@@ -93,9 +84,7 @@ Services.RunService.Heartbeat:Connect(function()
         local velLin = PrimaryPart.AssemblyLinearVelocity.Magnitude
         local velAng = PrimaryPart.AssemblyAngularVelocity.Magnitude
 
-        -- 🚨 Fling detectado em VOCÊ
         if velLin > 250 or velAng > 250 then
-            -- 🔒 Marca flag global — Anti-Void vai ignorar esse frame
             getgenv().AntiFlingEmAcao = true
 
             PrimaryPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
@@ -104,7 +93,6 @@ Services.RunService.Heartbeat:Connect(function()
                 PrimaryPart.CFrame = LastPosition
             end
 
-            -- Aviso no chat (com cooldown pra não spammar)
             local agora = os.clock()
             if agora - getgenv().AntiFlingUltimoAviso > 1 then
                 getgenv().AntiFlingUltimoAviso = agora
@@ -115,12 +103,10 @@ Services.RunService.Heartbeat:Connect(function()
                 end)
             end
 
-            -- 🔓 Libera a flag depois de 0.1s
             task.delay(0.1, function()
                 getgenv().AntiFlingEmAcao = false
             end)
         elseif velLin < 50 and velAng < 50 then
-            -- ✅ Estado normal → salva posição
             LastPosition = PrimaryPart.CFrame
         end
     end)
@@ -128,7 +114,7 @@ end)
 
 
 --=============================================================
--- 🛡️ ANTI-VOID v8 (prioriza superfície mais alta)
+-- 🛡️ ANTI-VOID v9
 --=============================================================
 
 local Players    = game:GetService("Players")
@@ -142,6 +128,7 @@ local player = Players.LocalPlayer
 -- CONFIG
 --=============================================================
 local CONFIG = {
+    -- 🎯 Janela pós-respawn
     LocalSeguroDuracao = 5,
     TempoCaindoLimite  = 0.2,
     TempoCaindoNormal  = 0.4,
@@ -149,6 +136,7 @@ local CONFIG = {
 
     VelocidadeMinimaCaindo = -25,
 
+    -- 🔍 Busca
     RaioInicial    = 5,
     RaioIncremento = 5,
     RaioMaximo     = 3000,
@@ -159,6 +147,11 @@ local CONFIG = {
 
     ToleranciaY = 3,
 
+    -- ☠️ Sistema de mortes consecutivas
+    MortesLimite    = 2,        -- 2 mortes em...
+    JanelaMortes    = 30,       -- ...30 segundos → TP pro local seguro
+
+    -- 🎨 Cores
     CorFade    = Color3.fromRGB(0, 220, 255),
     CorEfeito  = Color3.fromRGB(50, 255, 130),
     CorRGB     = Color3.fromRGB(0, 255, 255),
@@ -207,6 +200,10 @@ local ultimaPos = nil
 
 local localSeguroAtivo = false
 local localSeguroExpira = 0
+
+-- ☠️ Sistema de mortes consecutivas
+local historicoMortes = {}        -- {timestamp1, timestamp2, ...}
+local ultimaPosicaoSegura = nil   -- última posição pisável salva continuamente
 
 local function log(...)
     if CONFIG.Debug then print("[AntiVoid]", ...) end
@@ -698,6 +695,9 @@ local function teleportarParaSuperficie(character, motivo)
 
     if superficie then
         teleportarPara(superficie + Vector3.new(0, CONFIG.OffsetY, 0), character)
+    elseif ultimaPosicaoSegura then
+        log("🚀 Fallback: última posição segura")
+        teleportarPara(ultimaPosicaoSegura + Vector3.new(0, CONFIG.OffsetY, 0), character)
     else
         local spawn = workspace:FindFirstChildOfClass("SpawnLocation")
         if spawn then
@@ -713,6 +713,64 @@ local function teleportarParaSuperficie(character, motivo)
     local cooldown = localSeguroAtivo and 0.3 or 1.5
     task.wait(cooldown)
     tpCooldown = false
+end
+
+--=============================================================
+-- ☠️ SISTEMA DE MORTES CONSECUTIVAS
+-- 2 mortes em 30s → TP pro local seguro mais próximo
+--=============================================================
+local function registrarMorte()
+    local agora = os.clock()
+    table.insert(historicoMortes, agora)
+
+    -- Limpa mortes antigas (fora da janela)
+    for i = #historicoMortes, 1, -1 do
+        if agora - historicoMortes[i] > CONFIG.JanelaMortes then
+            table.remove(historicoMortes, i)
+        end
+    end
+
+    local total = #historicoMortes
+    log(string.format("💀 Morte registrada! Total na janela de %ds: %d/%d",
+        CONFIG.JanelaMortes, total, CONFIG.MortesLimite))
+
+    -- ☠️ Estourou o limite?
+    if total >= CONFIG.MortesLimite then
+        log("☠️ LOOP DE MORTE DETECTADO! TP pro local seguro mais próximo...")
+
+        historicoMortes = {}  -- reseta após o TP
+
+        task.spawn(function()
+            task.wait(0.5)  -- espera o personagem novo spawnar
+            local char = player.Character
+            if not char then return end
+
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if not hrp then return end
+
+            efeitoTeleporte()
+
+            local superficie = buscarSuperficiePisavel(hrp.Position, char)
+
+            if superficie then
+                log("☠️ TP pra superfície segura:", superficie)
+                teleportarPara(superficie + Vector3.new(0, CONFIG.OffsetY, 0), char)
+            elseif ultimaPosicaoSegura then
+                log("☠️ TP pra última posição segura")
+                teleportarPara(ultimaPosicaoSegura + Vector3.new(0, CONFIG.OffsetY, 0), char)
+            else
+                local spawn = workspace:FindFirstChildOfClass("SpawnLocation")
+                if spawn then
+                    log("☠️ Fallback: SpawnLocation")
+                    teleportarPara(spawn.Position + Vector3.new(0, 5, 0), char)
+                end
+            end
+
+            -- Ativa janela pós-respawn pra evitar re-morte imediata
+            localSeguroAtivo = true
+            localSeguroExpira = os.clock() + CONFIG.LocalSeguroDuracao
+        end)
+    end
 end
 
 --=============================================================
@@ -735,7 +793,7 @@ local function ativarJanelaPosRespawn()
 end
 
 --=============================================================
--- 🎯 DETECÇÃO (com checagem da flag do Anti-Fling)
+-- 🎯 DETECÇÃO (com flag do Anti-Fling + salvamento de posição)
 --=============================================================
 RunService.Heartbeat:Connect(function()
     local character = player.Character
@@ -759,11 +817,24 @@ RunService.Heartbeat:Connect(function()
         return
     end
 
-    -- 🚫 ANTI-FLING ESTÁ ATUANDO → ignora esse frame
+    -- 🚫 Anti-Fling atuando → ignora
     if getgenv().AntiFlingEmAcao then
         tempoCaindo = 0
         ultimaPos = nil
         return
+    end
+
+    -- 💾 Salva última posição segura continuamente (pra fallback)
+    if hrp.Position.Y > 50 then
+        -- só salva se tiver chão por perto (evita salvar no ar)
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = { character }
+        local origem = hrp.Position + Vector3.new(0, 2, 0)
+        local direcao = Vector3.new(0, -15, 0)
+        if workspace:Raycast(origem, direcao, params) then
+            ultimaPosicaoSegura = hrp.Position
+        end
     end
 
     local agora = os.clock()
@@ -816,10 +887,14 @@ RunService.Heartbeat:Connect(function()
 end)
 
 --=============================================================
--- 🔄 RESPAWN
+-- 🔄 RESPAWN + REGISTRO DE MORTE
 --=============================================================
 player.CharacterAdded:Connect(function(character)
     log("🔄 CharacterAdded")
+
+    -- ☠️ Registra a morte (dispara sistema de mortes consecutivas se necessário)
+    registrarMorte()
+
     task.wait(0.2)
     ativarJanelaPosRespawn()
     tempoCaindo = 0
@@ -834,4 +909,4 @@ if player.Character then
     end)
 end
 
-print("🛡️ Anti-Void v8 + Anti-Fling (integração otimizada) — carregado!")
+print("🛡️ Anti-Void v9 (mortes consecutivas) + Anti-Fling — carregado!")
