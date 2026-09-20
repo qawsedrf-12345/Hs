@@ -1,5 +1,7 @@
 --=============================================================
--- 🛡️ ANTI-VOID v9 + 🔊 SOM LENTO + 🎥 ZOOM + 🌊 DISTORÇÃO
+-- 🛡️ ANTI-VOID v9 + 🔊 SOM LENTO 0.75x
+-- ✓ Sistema de morte consecutiva (2x em 30s → TP pro local seguro)
+-- ✓ Som Lento Global em 0.75x (não cria sons)
 --=============================================================
 
 local Players      = game:GetService("Players")
@@ -7,7 +9,6 @@ local RunService   = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local Lighting     = game:GetService("Lighting")
 local SoundService = game:GetService("SoundService")
-local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 
@@ -37,19 +38,6 @@ local CONFIG = {
     -- ☠️ Sistema de mortes consecutivas
     MortesLimite    = 2,
     JanelaMortes    = 30,
-
-    -- 🎥 ZOOM INFINITO
-    ZoomAtivo       = true,
-    ZoomMaximo      = 10000,   -- studs máximos de zoom
-    ZoomMinimo      = 0.5,     -- studs mínimos (perto)
-    FOVZoomOut      = 40,      -- FOV quando longe (opcional)
-
-    -- 🌊 DISTORÇÃO VISUAL (contínua, estilo "embaixo d'água")
-    DistorcaoAtiva  = true,
-    DistorcaoAtivaIntensidade = 0.5,
-    DistorcaoOndaVelocidade    = 1.0,
-    DistorcaoBlurTamanho       = 0,     -- 0 = sem blur extra
-    DistorcaoCorTint           = Color3.fromRGB(255, 255, 255),
 
     -- 🎨 Cores
     CorFade    = Color3.fromRGB(0, 220, 255),
@@ -89,7 +77,7 @@ local CONFIG = {
 
     -- 🔊 SOM LENTO GLOBAL
     SomLentoAtivo       = true,
-    SomLentoVelocidade  = 0.75,
+    SomLentoVelocidade  = 0.75,   -- 0.75x
     SomLentoVolumeMult  = 1.0,
 
     Debug = true,
@@ -111,86 +99,6 @@ local ultimaPosicaoSegura = nil
 
 local function log(...)
     if CONFIG.Debug then print("[AntiVoid]", ...) end
-end
-
---=============================================================
--- 🎥 ZOOM INFINITO
---=============================================================
-local function ativarZoomInfinito()
-    if not CONFIG.ZoomAtivo then return end
-
-    pcall(function()
-        player.CameraMaxZoomDistance = CONFIG.ZoomMaximo
-        player.CameraMinZoomDistance = CONFIG.ZoomMinimo
-        log(string.format("🎥 Zoom infinito ativado: %.0f studs", CONFIG.ZoomMaximo))
-    end)
-
-    -- Monitora caso o jogo resete o valor
-    task.spawn(function()
-        while CONFIG.ZoomAtivo do
-            task.wait(2)
-            pcall(function()
-                if player.CameraMaxZoomDistance < CONFIG.ZoomMaximo then
-                    player.CameraMaxZoomDistance = CONFIG.ZoomMaximo
-                end
-                if player.CameraMinZoomDistance > CONFIG.ZoomMinimo then
-                    player.CameraMinZoomDistance = CONFIG.ZoomMinimo
-                end
-            end)
-        end
-    end)
-end
-
---=============================================================
--- 🌊 DISTORÇÃO VISUAL CONTÍNUA
--- Aplica um "wobble" sutil na câmera + tint de cor
--- =============================================================
-local function ativarDistorcao()
-    if not CONFIG.DistorcaoAtiva then return end
-
-    -- 1) Tint de cor (ColorCorrectionEffect)
-    local cc = Instance.new("ColorCorrectionEffect")
-    cc.Name = "DistorcaoTint"
-    cc.TintColor = CONFIG.DistorcaoCorTint
-    cc.Saturation = 0.1
-    cc.Contrast = 0.05
-    cc.Brightness = 0.02
-    cc.Parent = Lighting
-
-    -- 2) Blur opcional
-    local blur = nil
-    if CONFIG.DistorcaoBlurTamanho > 0 then
-        blur = Instance.new("BlurEffect")
-        blur.Name = "DistorcaoBlur"
-        blur.Size = CONFIG.DistorcaoBlurTamanho
-        blur.Parent = Lighting
-    end
-
-    -- 3) Wobble da câmera (rotação sutil contínua)
-    task.spawn(function()
-        local camera = workspace.CurrentCamera
-        local tempo = 0
-
-        RunService.RenderStepped:Connect(function(dt)
-            if not CONFIG.DistorcaoAtiva then return end
-            if not camera then
-                camera = workspace.CurrentCamera
-                return
-            end
-
-            tempo = tempo + dt * CONFIG.DistorcaoOndaVelocidade
-            local int = CONFIG.DistorcaoAtivaIntensidade
-
-            -- Wobble senoidal pequeno
-            local rx = math.sin(tempo * 1.3) * int * 0.004
-            local ry = math.cos(tempo * 0.9) * int * 0.004
-            local rz = math.sin(tempo * 1.7) * int * 0.006
-
-            camera.CFrame = camera.CFrame * CFrame.Angles(rx, ry, rz)
-        end)
-    end)
-
-    log("🌊 Distorção visual ativada")
 end
 
 --=============================================================
@@ -856,7 +764,9 @@ if player.Character then
 end
 
 --=============================================================
--- 🔊 SOM LENTO GLOBAL 0.75x
+-- 🔊 SOM LENTO GLOBAL 0.75x (integrado)
+-- Deixa TODOS os sons do jogo (que já existem e que forem criados)
+-- em câmera lenta. NÃO cria sons próprios.
 --=============================================================
 local sonsModificados = {}
 
@@ -977,10 +887,4 @@ getgenv().SomLento = {
     end,
 }
 
---=============================================================
--- INIT
---=============================================================
-ativarZoomInfinito()
-ativarDistorcao()
-
-print("🛡️ Anti-Void v9 + 🔊 Som Lento + 🎥 Zoom + 🌊 Distorção — carregado!")
+print("🛡️ Anti-Void v9 + 🔊 Som Lento 0.75x — carregado!")
