@@ -1,8 +1,7 @@
 --=============================================================
--- 🛡️ ANTI-VOID v4 — Sistema de TP temporário pós-respawn
--- Ao respawnar: cria um "LocalSeguro" que dura 5s
--- Nesses 5s: se detectar queda → TP imediato pro LocalSeguro
--- Após 5s: deleta o LocalSeguro e volta ao normal
+-- 🛡️ ANTI-VOID v7 — Prioriza SEMPRE a superfície mais ALTA
+-- Coleta candidatos em espiral e escolhe o de MAIOR Y.
+-- Assim caindo de um prédio → TP no topo do prédio, não no chão.
 --=============================================================
 
 local Players    = game:GetService("Players")
@@ -16,23 +15,26 @@ local player = Players.LocalPlayer
 -- CONFIG
 --=============================================================
 local CONFIG = {
-    -- 🎯 LocalSeguro temporário (pós-respawn)
-    LocalSeguroDuracao = 5,          -- ⏱️ quanto tempo dura o local (5s)
-    TempoCaindoLimite  = 0.2,        -- ⏱️ durante o LocalSeguro, TP com 0.2s caindo
+    LocalSeguroDuracao = 5,
+    TempoCaindoLimite  = 0.2,
+    TempoCaindoNormal  = 0.4,
     OffsetY            = 3,
 
-    -- 🎯 Modo normal (fora do LocalSeguro)
-    TempoCaindoNormal  = 0.4,        -- ⏱️ sem LocalSeguro, TP com 0.4s caindo
-    VelocidadeMinimaCaindo = -30,
-    AlturaSegura = 50,
+    VelocidadeMinimaCaindo = -25,
 
-    -- 🔍 Busca em espiral (só usada no modo normal)
+    -- 🔍 Busca
     RaioInicial    = 5,
     RaioIncremento = 5,
-    RaioMaximo     = 2000,
-    PassosPorAnel  = 16,
-    AlturaAcima    = 60,
-    AlturaAbaixo   = 300,
+    RaioMaximo     = 3000,
+    PassosPorAnel  = 20,
+    AlturaAcima    = 150,     -- procura bastante pra cima (topo de prédio)
+    AlturaAbaixo   = 500,
+    DotMinimoPisavel = 0.6,
+
+    -- 🎯 Prioridade
+    -- Coleta TODOS os candidatos e escolhe o de MAIOR Y.
+    -- Se dois tiverem Y próximo, prioriza o mais perto lateralmente.
+    ToleranciaY = 3,          -- se diferença de Y < 3, considera empate (aí usa menor distância)
 
     -- 🎨 Cores
     CorFade    = Color3.fromRGB(0, 220, 255),
@@ -76,14 +78,11 @@ local CONFIG = {
 --=============================================================
 -- ESTADO
 --=============================================================
-local ultimaPosicaoSegura = nil
 local tpCooldown = false
 local tempoCaindo = 0
 local ultimoTempo = os.clock()
 local ultimaPos = nil
 
--- 🛡️ LocalSeguro temporário
-local localSeguroCFrame = nil
 local localSeguroAtivo = false
 local localSeguroExpira = 0
 
@@ -440,9 +439,6 @@ local function efeitoFeixeLuz(cor, duracao)
     end)
 end
 
---=============================================================
--- 🎬 EFEITO COMPLETO
---=============================================================
 local function efeitoTeleporte()
     task.spawn(function()
         fadeFrame.BackgroundColor3 = CONFIG.CorFade
@@ -471,28 +467,23 @@ local function efeitoTeleporte()
 end
 
 --=============================================================
--- 🔍 BUSCAR SUPERFÍCIE MAIS PRÓXIMA
+-- 🔍 BUSCAR SUPERFÍCIE MAIS ALTA (prioridade absoluta)
+-- 1️⃣ Coleta TODOS os candidatos pisáveis num raio grande
+-- 2️⃣ Escolhe o de MAIOR Y
+-- 3️⃣ Em empate de Y (diferença < ToleranciaY), escolhe o mais PERTO
 --=============================================================
-local function buscarSuperficieMaisProxima(posicao, character)
+local function buscarSuperficiePisavel(posicao, character)
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.FilterDescendantsInstances = { character }
     params.IgnoreWater = false
 
-    local alturaAcima = CONFIG.AlturaAcima
+    local alturaAcima  = CONFIG.AlturaAcima
     local alturaAbaixo = CONFIG.AlturaAbaixo
+    local dotMinimo    = CONFIG.DotMinimoPisavel
+    local toleranciaY  = CONFIG.ToleranciaY
 
-    do
-        local origem = Vector3.new(posicao.X, posicao.Y + alturaAcima, posicao.Z)
-        local direcao = Vector3.new(0, -(alturaAcima + alturaAbaixo), 0)
-        local resultado = workspace:Raycast(origem, direcao, params)
-        if resultado then
-            local dot = resultado.Normal:Dot(Vector3.new(0, 1, 0))
-            if dot > 0.5 then
-                return resultado.Position
-            end
-        end
-    end
+    local candidatos = {}
 
     local raio = CONFIG.RaioInicial
     while raio <= CONFIG.RaioMaximo do
@@ -510,31 +501,60 @@ local function buscarSuperficieMaisProxima(posicao, character)
 
             if resultado then
                 local dot = resultado.Normal:Dot(Vector3.new(0, 1, 0))
-                if dot > 0.5 then
-                    return resultado.Position
+                if dot >= dotMinimo then
+                    table.insert(candidatos, {
+                        posicao = resultado.Position,
+                        raio = raio,
+                    })
                 end
             end
+        end
+
+        -- 🔥 Early exit: se achou candidatos E já passou de uns 3 anéis
+        -- sem achar nada mais alto, para de procurar.
+        -- (evita percorrer 3000 studs à toa)
+        if #candidatos > 0 and raio >= CONFIG.RaioInicial * 4 then
+            break
         end
 
         raio = raio + CONFIG.RaioIncremento
     end
 
-    return nil
+    if #candidatos == 0 then
+        log("❌ Nenhuma superfície pisável encontrada")
+        return nil
+    end
+
+    -- 🏆 Escolhe o mais ALTO (maior Y)
+    local melhor = candidatos[1]
+    for _, c in ipairs(candidatos) do
+        local dY = c.posicao.Y - melhor.posicao.Y
+
+        if dY > toleranciaY then
+            -- claramente mais alto → substitui
+            melhor = c
+        elseif math.abs(dY) <= toleranciaY then
+            -- empate técnico → escolhe o de menor raio (mais perto lateralmente)
+            if c.raio < melhor.raio then
+                melhor = c
+            end
+        end
+    end
+
+    log(string.format("🎯 Escolhido: Y=%.1f | raio=%d | %d candidatos no total",
+        melhor.posicao.Y, melhor.raio, #candidatos))
+
+    return melhor.posicao
 end
 
 --=============================================================
 -- 🎯 TELEPORTAR
 --=============================================================
-local function teleportarPara(posicao, character, manterRotacao)
+local function teleportarPara(posicao, character)
     local hrp = character:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
 
-    local rotacaoAtual
-    if manterRotacao then
-        rotacaoAtual = hrp.CFrame - hrp.CFrame.Position
-    else
-        rotacaoAtual = CFrame.new()  -- rotação padrão
-    end
+    local rotacaoAtual = hrp.CFrame - hrp.CFrame.Position
 
     hrp.CFrame = CFrame.new(posicao) * rotacaoAtual
     hrp.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
@@ -542,44 +562,13 @@ local function teleportarPara(posicao, character, manterRotacao)
 end
 
 --=============================================================
--- 🚀 TELEPORTAR PRA LOCAL SEGURO (durante janela pós-respawn)
+-- 🚀 TP
 --=============================================================
-local function teleportarParaLocalSeguro(character)
+local function teleportarParaSuperficie(character, motivo)
     if tpCooldown then return end
     tpCooldown = true
 
-    log("🛡️ TP pro LOCAL SEGURO (modo pós-respawn)")
-
-    tempoCaindo = 0
-    ultimoTempo = os.clock()
-
-    local hrp = character:FindFirstChild("HumanoidRootPart")
-    if not hrp or not localSeguroCFrame then
-        tpCooldown = false
-        return
-    end
-
-    efeitoTeleporte()
-
-    -- Mantém rotação atual
-    teleportarPara(localSeguroCFrame.Position + Vector3.new(0, CONFIG.OffsetY, 0), character, true)
-
-    tempoCaindo = 0
-    ultimoTempo = os.clock()
-    ultimaPos = nil
-
-    task.wait(0.3)   -- cooldown curto durante a janela
-    tpCooldown = false
-end
-
---=============================================================
--- 🚀 TELEPORTAR PRA SUPERFÍCIE (modo normal)
---=============================================================
-local function teleportarParaSeguro(character)
-    if tpCooldown then return end
-    tpCooldown = true
-
-    log("🚀 TP pra superfície (modo normal)")
+    log("🚀 TP disparado (" .. motivo .. ")")
 
     tempoCaindo = 0
     ultimoTempo = os.clock()
@@ -592,16 +581,15 @@ local function teleportarParaSeguro(character)
 
     efeitoTeleporte()
 
-    local superficie = buscarSuperficieMaisProxima(hrp.Position, character)
+    local superficie = buscarSuperficiePisavel(hrp.Position, character)
 
     if superficie then
-        teleportarPara(superficie + Vector3.new(0, CONFIG.OffsetY, 0), character, true)
-    elseif ultimaPosicaoSegura then
-        teleportarPara(ultimaPosicaoSegura + Vector3.new(0, CONFIG.OffsetY, 0), character, true)
+        teleportarPara(superficie + Vector3.new(0, CONFIG.OffsetY, 0), character)
     else
         local spawn = workspace:FindFirstChildOfClass("SpawnLocation")
         if spawn then
-            teleportarPara(spawn.Position + Vector3.new(0, 5, 0), character, true)
+            log("🚀 Fallback: SpawnLocation")
+            teleportarPara(spawn.Position + Vector3.new(0, 5, 0), character)
         end
     end
 
@@ -609,48 +597,32 @@ local function teleportarParaSeguro(character)
     ultimoTempo = os.clock()
     ultimaPos = nil
 
-    task.wait(1.5)
+    local cooldown = localSeguroAtivo and 0.3 or 1.5
+    task.wait(cooldown)
     tpCooldown = false
 end
 
 --=============================================================
--- 🛡️ SISTEMA DO LOCAL SEGURO PÓS-RESPAWN
+-- 🛡️ JANELA PÓS-RESPAWN
 --=============================================================
-local function ativarLocalSeguro(posicao)
-    localSeguroCFrame = CFrame.new(posicao)
+local function ativarJanelaPosRespawn()
     localSeguroAtivo = true
     localSeguroExpira = os.clock() + CONFIG.LocalSeguroDuracao
 
-    log(string.format("🛡️ LocalSeguro ATIVADO por %.1fs em %s", CONFIG.LocalSeguroDuracao, tostring(posicao)))
+    log(string.format("🛡️ Janela pós-respawn ATIVADA por %.1fs", CONFIG.LocalSeguroDuracao))
 
-    -- ⏱️ Desativa depois do tempo
     task.spawn(function()
-        local tempoRestante = CONFIG.LocalSeguroDuracao
-        while tempoRestante > 0 do
+        while os.clock() < localSeguroExpira do
             task.wait(0.5)
-            tempoRestante = tempoRestante - 0.5
-
             if not localSeguroAtivo then return end
-            if os.clock() >= localSeguroExpira then
-                localSeguroAtivo = false
-                localSeguroCFrame = nil
-                log("🛡️ LocalSeguro EXPIRADO — voltando ao modo normal")
-                return
-            end
         end
+        localSeguroAtivo = false
+        log("🛡️ Janela pós-respawn EXPIRADA")
     end)
 end
 
-local function desativarLocalSeguro()
-    if localSeguroAtivo then
-        localSeguroAtivo = false
-        localSeguroCFrame = nil
-        log("🛡️ LocalSeguro desativado manualmente")
-    end
-end
-
 --=============================================================
--- 🎯 DETECÇÃO DE QUEDA
+-- 🎯 DETECÇÃO
 --=============================================================
 RunService.Heartbeat:Connect(function()
     local character = player.Character
@@ -674,25 +646,17 @@ RunService.Heartbeat:Connect(function()
         return
     end
 
-    if hrp.Position.Y > CONFIG.AlturaSegura then
-        ultimaPosicaoSegura = hrp.Position
-    end
-
     local agora = os.clock()
     local dt = agora - ultimoTempo
     ultimoTempo = agora
 
     local velocidadeY = hrp.AssemblyLinearVelocity.Y
 
-    -- Fonte 1: velocidade Y
     local caindoPorVelocidade = velocidadeY < CONFIG.VelocidadeMinimaCaindo
-
-    -- Fonte 2: estado Freefall
     local state = humanoid:GetState()
     local caindoPorEstado = (state == Enum.HumanoidStateType.Freefall)
         or (state == Enum.HumanoidStateType.FallingDown)
 
-    -- Fonte 3: descida real
     local caindoPorPosicao = false
     if ultimaPos then
         local deltaY = hrp.Position.Y - ultimaPos.Y
@@ -700,7 +664,6 @@ RunService.Heartbeat:Connect(function()
     end
     ultimaPos = hrp.Position
 
-    -- 🔥 Se está subindo → reseta
     if velocidadeY > 5 then
         tempoCaindo = 0
         return
@@ -708,30 +671,24 @@ RunService.Heartbeat:Connect(function()
 
     local estaCaindo = caindoPorVelocidade or caindoPorEstado or caindoPorPosicao
 
-    -- 🎯 Define o limite de tempo baseado no modo
     local limiteAtual
     if localSeguroAtivo and os.clock() < localSeguroExpira then
-        limiteAtual = CONFIG.TempoCaindoLimite   -- 0.2s durante a janela
+        limiteAtual = CONFIG.TempoCaindoLimite
     else
-        limiteAtual = CONFIG.TempoCaindoNormal   -- 0.4s no normal
+        limiteAtual = CONFIG.TempoCaindoNormal
     end
 
     if estaCaindo then
         tempoCaindo = tempoCaindo + dt
 
         if CONFIG.Debug and tempoCaindo >= 0.1 then
-            log(string.format("⏱️ Caindo %.2fs | limite=%.2fs | localSeguro=%s | estado=%s",
-                tempoCaindo, limiteAtual, tostring(localSeguroAtivo), tostring(state)))
+            log(string.format("⏱️ %.2fs | limite %.2fs | velY=%.0f",
+                tempoCaindo, limiteAtual, velocidadeY))
         end
 
         if tempoCaindo >= limiteAtual and not tpCooldown then
-            if localSeguroAtivo and os.clock() < localSeguroExpira then
-                -- 🛡️ Durante a janela → vai pro LocalSeguro
-                teleportarParaLocalSeguro(character)
-            else
-                -- 🌐 Fora da janela → busca superfície normal
-                teleportarParaSeguro(character)
-            end
+            local motivo = localSeguroAtivo and "janela pós-respawn" or "modo normal"
+            teleportarParaSuperficie(character, motivo)
         end
     else
         tempoCaindo = 0
@@ -739,36 +696,22 @@ RunService.Heartbeat:Connect(function()
 end)
 
 --=============================================================
--- 🔄 AO RESPAWNAR → ativa LocalSeguro temporário
+-- 🔄 RESPAWN
 --=============================================================
 player.CharacterAdded:Connect(function(character)
-    log("🔄 CharacterAdded — aguardando HRP...")
-
-    -- Espera o HRP existir
-    local hrp = character:WaitForChild("HumanoidRootPart", 5)
-    if not hrp then
-        log("❌ HRP não apareceu — abortando LocalSeguro")
-        return
-    end
-
-    -- Espera o personagem parar (fica em pé)
-    task.wait(0.15)
-
-    -- 🛡️ Ativa o LocalSeguro na posição atual de spawn
-    ativarLocalSeguro(hrp.Position)
-
-    -- Reseta estados
+    log("🔄 CharacterAdded")
+    task.wait(0.2)
+    ativarJanelaPosRespawn()
     tempoCaindo = 0
     ultimoTempo = os.clock()
     ultimaPos = nil
 end)
 
--- Ativa pra character já existente (se o script for executado com player vivo)
 if player.Character then
-    local hrp = player.Character:FindFirstChild("HumanoidRootPart")
-    if hrp then
-        ativarLocalSeguro(hrp.Position)
-    end
+    task.spawn(function()
+        task.wait(0.2)
+        ativarJanelaPosRespawn()
+    end)
 end
 
-print("🛡️ Anti-Void v4 (LocalSeguro pós-respawn 5s) carregado!")
+print("🛡️ Anti-Void v7 (prioriza SEMPRE a superfície mais ALTA) carregado!")
