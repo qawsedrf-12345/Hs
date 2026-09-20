@@ -148,8 +148,8 @@ local CONFIG = {
     ToleranciaY = 3,
 
     -- ☠️ Sistema de mortes consecutivas
-    MortesLimite    = 2,        -- 2 mortes em...
-    JanelaMortes    = 30,       -- ...30 segundos → TP pro local seguro
+    MortesLimite    = 2,
+    JanelaMortes    = 30,
 
     -- 🎨 Cores
     CorFade    = Color3.fromRGB(0, 220, 255),
@@ -201,9 +201,8 @@ local ultimaPos = nil
 local localSeguroAtivo = false
 local localSeguroExpira = 0
 
--- ☠️ Sistema de mortes consecutivas
-local historicoMortes = {}        -- {timestamp1, timestamp2, ...}
-local ultimaPosicaoSegura = nil   -- última posição pisável salva continuamente
+local historicoMortes = {}
+local ultimaPosicaoSegura = nil
 
 local function log(...)
     if CONFIG.Debug then print("[AntiVoid]", ...) end
@@ -321,9 +320,6 @@ feixeGradient.Parent = feixeFrame
 
 local blurEffect = nil
 
---=============================================================
--- FUNÇÕES DE EFEITO
---=============================================================
 local function criarBlur(tamanho)
     if blurEffect and blurEffect.Parent then blurEffect:Destroy() end
     blurEffect = Instance.new("BlurEffect")
@@ -585,9 +581,6 @@ local function efeitoTeleporte()
     end)
 end
 
---=============================================================
--- 🔍 BUSCAR SUPERFÍCIE MAIS ALTA
---=============================================================
 local function buscarSuperficiePisavel(posicao, character)
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
@@ -657,9 +650,6 @@ local function buscarSuperficiePisavel(posicao, character)
     return melhor.posicao
 end
 
---=============================================================
--- 🎯 TELEPORTAR
---=============================================================
 local function teleportarPara(posicao, character)
     local hrp = character:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
@@ -671,9 +661,6 @@ local function teleportarPara(posicao, character)
     hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
 end
 
---=============================================================
--- 🚀 TP
---=============================================================
 local function teleportarParaSuperficie(character, motivo)
     if tpCooldown then return end
     tpCooldown = true
@@ -715,15 +702,10 @@ local function teleportarParaSuperficie(character, motivo)
     tpCooldown = false
 end
 
---=============================================================
--- ☠️ SISTEMA DE MORTES CONSECUTIVAS
--- 2 mortes em 30s → TP pro local seguro mais próximo
---=============================================================
 local function registrarMorte()
     local agora = os.clock()
     table.insert(historicoMortes, agora)
 
-    -- Limpa mortes antigas (fora da janela)
     for i = #historicoMortes, 1, -1 do
         if agora - historicoMortes[i] > CONFIG.JanelaMortes then
             table.remove(historicoMortes, i)
@@ -734,14 +716,13 @@ local function registrarMorte()
     log(string.format("💀 Morte registrada! Total na janela de %ds: %d/%d",
         CONFIG.JanelaMortes, total, CONFIG.MortesLimite))
 
-    -- ☠️ Estourou o limite?
     if total >= CONFIG.MortesLimite then
         log("☠️ LOOP DE MORTE DETECTADO! TP pro local seguro mais próximo...")
 
-        historicoMortes = {}  -- reseta após o TP
+        historicoMortes = {}
 
         task.spawn(function()
-            task.wait(0.5)  -- espera o personagem novo spawnar
+            task.wait(0.5)
             local char = player.Character
             if not char then return end
 
@@ -766,16 +747,12 @@ local function registrarMorte()
                 end
             end
 
-            -- Ativa janela pós-respawn pra evitar re-morte imediata
             localSeguroAtivo = true
             localSeguroExpira = os.clock() + CONFIG.LocalSeguroDuracao
         end)
     end
 end
 
---=============================================================
--- 🛡️ JANELA PÓS-RESPAWN
---=============================================================
 local function ativarJanelaPosRespawn()
     localSeguroAtivo = true
     localSeguroExpira = os.clock() + CONFIG.LocalSeguroDuracao
@@ -792,9 +769,6 @@ local function ativarJanelaPosRespawn()
     end)
 end
 
---=============================================================
--- 🎯 DETECÇÃO (com flag do Anti-Fling + salvamento de posição)
---=============================================================
 RunService.Heartbeat:Connect(function()
     local character = player.Character
     if not character then
@@ -817,16 +791,13 @@ RunService.Heartbeat:Connect(function()
         return
     end
 
-    -- 🚫 Anti-Fling atuando → ignora
     if getgenv().AntiFlingEmAcao then
         tempoCaindo = 0
         ultimaPos = nil
         return
     end
 
-    -- 💾 Salva última posição segura continuamente (pra fallback)
     if hrp.Position.Y > 50 then
-        -- só salva se tiver chão por perto (evita salvar no ar)
         local params = RaycastParams.new()
         params.FilterType = Enum.RaycastFilterType.Exclude
         params.FilterDescendantsInstances = { character }
@@ -886,13 +857,9 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
---=============================================================
--- 🔄 RESPAWN + REGISTRO DE MORTE
---=============================================================
 player.CharacterAdded:Connect(function(character)
     log("🔄 CharacterAdded")
 
-    -- ☠️ Registra a morte (dispara sistema de mortes consecutivas se necessário)
     registrarMorte()
 
     task.wait(0.2)
@@ -910,3 +877,520 @@ if player.Character then
 end
 
 print("🛡️ Anti-Void v9 (mortes consecutivas) + Anti-Fling — carregado!")
+
+
+--=============================================================
+-- 🎬 GLITCH DE TELA v6 — TUDO em ciano (escuro + claro)
+-- Todas as cores são:
+--   • Ciano escuro transparente
+--   • Ciano (puro)
+--=============================================================
+
+local PlayersG           = game:GetService("Players")
+local RunServiceG        = game:GetService("RunService")
+local TweenServiceG      = game:GetService("TweenService")
+local LightingG          = game:GetService("Lighting")
+local SoundServiceG      = game:GetService("SoundService")
+
+local playerG = PlayersG.LocalPlayer
+
+--=============================================================
+-- 🎨 PALETA — só ciano escuro e ciano
+--=============================================================
+local CIANO_ESCURO = Color3.fromRGB(0, 100, 120)
+local CIANO        = Color3.fromRGB(0, 255, 255)
+
+--=============================================================
+-- CONFIG
+--=============================================================
+local CONFIG_G = {
+    GlitchIntervaloMin = 0.08,
+    GlitchIntervaloMax = 0.4,
+
+    RGBSplitAtivo        = true,
+    RGBSplitDeslocamento = 22,
+    RGBSplitDuracao      = 0.15,
+    RGBSplitCorA         = CIANO_ESCURO,
+    RGBSplitCorB         = CIANO,
+
+    ScanlinesAtivo          = true,
+    ScanlinesDuracao        = 0.4,
+    ScanlinesVelocidade     = 3,
+    ScanlinesTransparencia  = 0.35,
+    ScanlinesAltura         = 2,
+    ScanlinesEspacamento    = 4,
+    ScanlinesFlicker        = true,
+    ScanlinesCor            = CIANO_ESCURO,
+
+    GlitchBlocksAtivo   = true,
+    GlitchBlocksMin     = 15,
+    GlitchBlocksMax     = 45,
+    GlitchBlocksCor     = CIANO,
+
+    BlurGlitchAtivo    = true,
+    BlurGlitchChance   = 0.35,
+    BlurGlitchTamanho  = 10,
+    BlurGlitchDuracao  = 0.1,
+
+    TearingAtivo       = true,
+    TearingChance      = 0.5,
+    TearingFatiasMin   = 2,
+    TearingFatiasMax   = 6,
+    TearingDeslocMax   = 80,
+    TearingDuracao     = 0.1,
+    TearingCor         = CIANO,
+
+    JitterAtivo        = true,
+    JitterChance       = 0.3,
+    JitterForca        = 0.01,
+    JitterDuracao      = 0.08,
+
+    SomLentoAtivo       = true,
+    SomLentoVelocidade  = 0.65,
+    SomLentoVolumeMult  = 0.9,
+
+    SomGlitchAtivo = true,
+    SomGlitchIDs = {
+        "rbxassetid://131961133",
+        "rbxassetid://374436830",
+        "rbxassetid://1837879082",
+    },
+    SomGlitchVolumeMin = 0.15,
+    SomGlitchVolumeMax = 0.35,
+    SomGlitchPitchMin  = 0.5,
+    SomGlitchPitchMax  = 0.85,
+    SomGlitchIntervaloMin = 2,
+    SomGlitchIntervaloMax = 5,
+
+    Debug = false,
+}
+
+--=============================================================
+-- ESTADO
+--=============================================================
+local ativo = true
+local sonsModificados = {}
+
+local function log(...)
+    if CONFIG_G.Debug then print("[Glitch]", ...) end
+end
+
+local function randomEntre(min, max)
+    return min + math.random() * (max - min)
+end
+
+--=============================================================
+-- 🌟 GUI
+--=============================================================
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "GlitchTela"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.DisplayOrder = 999
+screenGui.Parent = playerG:WaitForChild("PlayerGui")
+
+local rgbContainer = Instance.new("Frame")
+rgbContainer.Size = UDim2.new(1, 0, 1, 0)
+rgbContainer.BackgroundTransparency = 1
+rgbContainer.ZIndex = 998
+rgbContainer.Parent = screenGui
+
+local rgbA = Instance.new("Frame")
+rgbA.Size = UDim2.new(1, 0, 1, 0)
+rgbA.BackgroundColor3 = CONFIG_G.RGBSplitCorA
+rgbA.BackgroundTransparency = 1
+rgbA.BorderSizePixel = 0
+rgbA.ZIndex = 998
+rgbA.Parent = rgbContainer
+
+local rgbB = Instance.new("Frame")
+rgbB.Size = UDim2.new(1, 0, 1, 0)
+rgbB.BackgroundColor3 = CONFIG_G.RGBSplitCorB
+rgbB.BackgroundTransparency = 1
+rgbB.BorderSizePixel = 0
+rgbB.ZIndex = 998
+rgbB.Parent = rgbContainer
+
+local scanlinesFrame = Instance.new("Frame")
+scanlinesFrame.Size = UDim2.new(1, 0, 1, 0)
+scanlinesFrame.BackgroundTransparency = 1
+scanlinesFrame.ZIndex = 999
+scanlinesFrame.Parent = screenGui
+
+local telaAltura = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize.Y or 1080
+local scanlineCount = math.floor(telaAltura / CONFIG_G.ScanlinesEspacamento)
+
+local scanlines = {}
+for i = 1, scanlineCount do
+    local linha = Instance.new("Frame")
+    linha.Size = UDim2.new(1, 0, 0, CONFIG_G.ScanlinesAltura)
+    linha.Position = UDim2.new(0, 0, 0, (i - 1) * CONFIG_G.ScanlinesEspacamento)
+    linha.BackgroundColor3 = CONFIG_G.ScanlinesCor
+    linha.BackgroundTransparency = 1
+    linha.BorderSizePixel = 0
+    linha.ZIndex = 999
+    linha.Parent = scanlinesFrame
+    table.insert(scanlines, linha)
+end
+
+local glitchBlocksContainer = Instance.new("Frame")
+glitchBlocksContainer.Size = UDim2.new(1, 0, 1, 0)
+glitchBlocksContainer.BackgroundTransparency = 1
+glitchBlocksContainer.ZIndex = 1005
+glitchBlocksContainer.Parent = screenGui
+
+local tearingContainer = Instance.new("Frame")
+tearingContainer.Size = UDim2.new(1, 0, 1, 0)
+tearingContainer.BackgroundTransparency = 1
+tearingContainer.ZIndex = 1003
+tearingContainer.Parent = screenGui
+
+local jitterContainer = Instance.new("Frame")
+jitterContainer.Size = UDim2.new(1, 0, 1, 0)
+jitterContainer.BackgroundTransparency = 1
+jitterContainer.ZIndex = 1007
+jitterContainer.Parent = screenGui
+
+local blurEffectG = nil
+
+local function blurGlitch()
+    if blurEffectG and blurEffectG.Parent then blurEffectG:Destroy() end
+
+    blurEffectG = Instance.new("BlurEffect")
+    blurEffectG.Size = 0
+    blurEffectG.Parent = LightingG
+
+    TweenServiceG:Create(blurEffectG, TweenInfo.new(0.05, Enum.EasingStyle.Quad), {
+        Size = CONFIG_G.BlurGlitchTamanho,
+    }):Play()
+
+    task.delay(CONFIG_G.BlurGlitchDuracao, function()
+        if blurEffectG and blurEffectG.Parent then
+            TweenServiceG:Create(blurEffectG, TweenInfo.new(0.1, Enum.EasingStyle.Quad), {
+                Size = 0,
+            }):Play()
+
+            task.delay(0.15, function()
+                if blurEffectG and blurEffectG.Parent then
+                    blurEffectG:Destroy()
+                    blurEffectG = nil
+                end
+            end)
+        end
+    end)
+end
+
+local function aplicarScanlinesBase()
+    for _, linha in ipairs(scanlines) do
+        linha.BackgroundTransparency = 1 - CONFIG_G.ScanlinesTransparencia * 0.4
+    end
+end
+
+local function efeitoScanlines()
+    task.spawn(function()
+        for _, linha in ipairs(scanlines) do
+            linha.BackgroundTransparency = 1 - CONFIG_G.ScanlinesTransparencia
+        end
+
+        local inicio = tick()
+        local conn
+        conn = RunServiceG.RenderStepped:Connect(function()
+            local p = (tick() - inicio) / CONFIG_G.ScanlinesDuracao
+            if p >= 1 then
+                conn:Disconnect()
+                aplicarScanlinesBase()
+                return
+            end
+
+            local offset = p * CONFIG_G.ScanlinesVelocidade * CONFIG_G.ScanlinesEspacamento
+            for i, linha in ipairs(scanlines) do
+                local posY = ((i - 1) * CONFIG_G.ScanlinesEspacamento + offset) % (scanlineCount * CONFIG_G.ScanlinesEspacamento)
+                linha.Position = UDim2.new(0, 0, 0, posY)
+            end
+
+            if CONFIG_G.ScanlinesFlicker then
+                local flicker = 1 - CONFIG_G.ScanlinesTransparencia
+                local variacao = math.random(-15, 15) / 100
+                flicker = math.clamp(flicker + variacao, 0, 1)
+                for _, linha in ipairs(scanlines) do
+                    linha.BackgroundTransparency = flicker
+                end
+            end
+        end)
+    end)
+end
+
+aplicarScanlinesBase()
+
+local function aplicarSomLento(som)
+    if not som or not som:IsA("Sound") then return end
+    if not CONFIG_G.SomLentoAtivo then return end
+    if sonsModificados[som] then return end
+
+    pcall(function()
+        local original = som:GetAttribute("_SomOriginalSpeed")
+        if not original then
+            som:SetAttribute("_SomOriginalSpeed", som.PlaybackSpeed)
+        end
+
+        som.PlaybackSpeed = CONFIG_G.SomLentoVelocidade
+        sonsModificados[som] = true
+    end)
+end
+
+local function aplicarSomLentoEmTudo()
+    if not CONFIG_G.SomLentoAtivo then return end
+
+    for _, som in ipairs(SoundServiceG:GetDescendants()) do
+        if som:IsA("Sound") then aplicarSomLento(som) end
+    end
+
+    for _, som in ipairs(workspace:GetDescendants()) do
+        if som:IsA("Sound") then aplicarSomLento(som) end
+    end
+
+    for _, plr in ipairs(PlayersG:GetPlayers()) do
+        for _, som in ipairs(plr:GetDescendants()) do
+            if som:IsA("Sound") then aplicarSomLento(som) end
+        end
+    end
+end
+
+local function monitorarNovosSons()
+    SoundServiceG.DescendantAdded:Connect(function(obj)
+        if obj:IsA("Sound") then
+            task.wait(0.05)
+            aplicarSomLento(obj)
+        end
+    end)
+
+    workspace.DescendantAdded:Connect(function(obj)
+        if obj:IsA("Sound") then
+            task.wait(0.05)
+            aplicarSomLento(obj)
+        end
+    end)
+end
+
+local function efeitoRGBSplit()
+    task.spawn(function()
+        rgbA.BackgroundTransparency = 0.7
+        rgbB.BackgroundTransparency = 0.7
+
+        local inicio = tick()
+        local conn
+        conn = RunServiceG.RenderStepped:Connect(function()
+            local p = (tick() - inicio) / CONFIG_G.RGBSplitDuracao
+            if p >= 1 then
+                conn:Disconnect()
+                rgbA.BackgroundTransparency = 1
+                rgbB.BackgroundTransparency = 1
+                return
+            end
+
+            local forca = (1 + p) * (1 - p * 0.5)
+            local desloc = CONFIG_G.RGBSplitDeslocamento * forca * (math.random() > 0.5 and 1 or -1)
+            rgbA.Position = UDim2.new(0, -desloc, 0, 0)
+            rgbB.Position = UDim2.new(0, desloc, 0, 0)
+            rgbA.BackgroundTransparency = 0.7 + 0.3 * p
+            rgbB.BackgroundTransparency = 0.7 + 0.3 * p
+        end)
+    end)
+end
+
+local function efeitoGlitchBlocks()
+    task.spawn(function()
+        local qtd = math.random(CONFIG_G.GlitchBlocksMin, CONFIG_G.GlitchBlocksMax)
+
+        for _ = 1, qtd do
+            task.spawn(function()
+                local bloco = Instance.new("Frame")
+                bloco.Size = UDim2.new(math.random(3, 20) / 100, 0, math.random(1, 3) / 100, 0)
+                bloco.Position = UDim2.new(math.random() * 0.9, 0, math.random() * 0.95, 0)
+                bloco.BackgroundColor3 = CONFIG_G.GlitchBlocksCor
+                bloco.BackgroundTransparency = math.random(20, 60) / 100
+                bloco.BorderSizePixel = 0
+                bloco.ZIndex = 1005
+                bloco.Parent = glitchBlocksContainer
+
+                task.wait(math.random(1, 4) / 100)
+                if bloco and bloco.Parent then bloco:Destroy() end
+            end)
+        end
+    end)
+end
+
+local function efeitoTearing()
+    if not CONFIG_G.TearingAtivo then return end
+    if math.random() > CONFIG_G.TearingChance then return end
+
+    task.spawn(function()
+        local fatias = math.random(CONFIG_G.TearingFatiasMin, CONFIG_G.TearingFatiasMax)
+
+        for _ = 1, fatias do
+            task.spawn(function()
+                local fatia = Instance.new("Frame")
+                fatia.Size = UDim2.new(1, 0, math.random(2, 8) / 100, 0)
+                fatia.Position = UDim2.new(0, 0, math.random() * 0.95, 0)
+                fatia.BackgroundColor3 = CONFIG_G.TearingCor
+                fatia.BackgroundTransparency = math.random(60, 90) / 100
+                fatia.BorderSizePixel = 0
+                fatia.ZIndex = 1003
+                fatia.Parent = tearingContainer
+
+                local desloc = randomEntre(-CONFIG_G.TearingDeslocMax, CONFIG_G.TearingDeslocMax)
+                fatia.Position = UDim2.new(0, desloc, fatia.Position.Y.Scale, 0)
+
+                task.wait(CONFIG_G.TearingDuracao)
+
+                if fatia and fatia.Parent then fatia:Destroy() end
+            end)
+        end
+    end)
+end
+
+local function efeitoJitter()
+    if not CONFIG_G.JitterAtivo then return end
+    if math.random() > CONFIG_G.JitterChance then return end
+
+    task.spawn(function()
+        local forca = CONFIG_G.JitterForca
+        local inicio = tick()
+
+        local conn
+        conn = RunServiceG.RenderStepped:Connect(function()
+            local p = (tick() - inicio) / CONFIG_G.JitterDuracao
+            if p >= 1 then
+                conn:Disconnect()
+                jitterContainer.Position = UDim2.new(0, 0, 0, 0)
+                return
+            end
+
+            local f = forca * (1 - p)
+            local dx = (math.random() - 0.5) * 2 * f
+            local dy = (math.random() - 0.5) * 2 * f
+            jitterContainer.Position = UDim2.new(dx, 0, dy, 0)
+        end)
+    end)
+end
+
+local function tocarSomGlitch()
+    if not CONFIG_G.SomGlitchAtivo then return end
+
+    task.spawn(function()
+        local som = Instance.new("Sound")
+        som.SoundId = CONFIG_G.SomGlitchIDs[math.random(1, #CONFIG_G.SomGlitchIDs)]
+        som.Volume = randomEntre(CONFIG_G.SomGlitchVolumeMin, CONFIG_G.SomGlitchVolumeMax)
+        som.PlaybackSpeed = randomEntre(CONFIG_G.SomGlitchPitchMin, CONFIG_G.SomGlitchPitchMax)
+        som.Parent = SoundServiceG
+        som:Play()
+
+        som.Ended:Connect(function()
+            if som and som.Parent then som:Destroy() end
+        end)
+
+        task.delay(3, function()
+            if som and som.Parent then som:Destroy() end
+        end)
+    end)
+end
+
+local function loopGlitchTela()
+    task.spawn(function()
+        while ativo do
+            local espera = randomEntre(CONFIG_G.GlitchIntervaloMin, CONFIG_G.GlitchIntervaloMax)
+            task.wait(espera)
+
+            if not ativo then break end
+
+            local escolha = math.random(1, 5)
+
+            if escolha == 1 and CONFIG_G.RGBSplitAtivo then
+                efeitoRGBSplit()
+            elseif escolha == 2 and CONFIG_G.ScanlinesAtivo then
+                efeitoScanlines()
+            elseif escolha == 3 and CONFIG_G.GlitchBlocksAtivo then
+                efeitoGlitchBlocks()
+            elseif escolha == 4 and CONFIG_G.BlurGlitchAtivo then
+                blurGlitch()
+            elseif escolha == 5 then
+                if math.random() > 0.5 then
+                    efeitoTearing()
+                else
+                    efeitoJitter()
+                end
+            end
+        end
+    end)
+end
+
+local function loopSomGlitch()
+    task.spawn(function()
+        while ativo do
+            local espera = randomEntre(CONFIG_G.SomGlitchIntervaloMin, CONFIG_G.SomGlitchIntervaloMax)
+            task.wait(espera)
+
+            if not ativo then break end
+            tocarSomGlitch()
+        end
+    end)
+end
+
+local function loopReaplicarSomLento()
+    task.spawn(function()
+        while ativo do
+            task.wait(2)
+            if not ativo then break end
+            aplicarSomLentoEmTudo()
+        end
+    end)
+end
+
+aplicarSomLentoEmTudo()
+monitorarNovosSons()
+
+loopGlitchTela()
+loopSomGlitch()
+loopReaplicarSomLento()
+
+getgenv().GlitchTela = {
+    desativar = function()
+        ativo = false
+        for _, obj in ipairs(scanlines) do
+            obj.BackgroundTransparency = 1
+        end
+        for _, obj in ipairs(glitchBlocksContainer:GetChildren()) do
+            obj:Destroy()
+        end
+        for _, obj in ipairs(tearingContainer:GetChildren()) do
+            obj:Destroy()
+        end
+        if blurEffectG and blurEffectG.Parent then blurEffectG:Destroy() end
+        jitterContainer.Position = UDim2.new(0, 0, 0, 0)
+        print("🎬 Glitch desativado")
+    end,
+    ativar = function()
+        ativo = true
+        aplicarScanlinesBase()
+        loopGlitchTela()
+        loopSomGlitch()
+        loopReaplicarSomLento()
+        print("🎬 Glitch ativado")
+    end,
+    restaurarSons = function()
+        for som in pairs(sonsModificados) do
+            pcall(function()
+                if som and som.Parent then
+                    local original = som:GetAttribute("_SomOriginalSpeed")
+                    if original then
+                        som.PlaybackSpeed = original
+                    end
+                end
+            end)
+        end
+        sonsModificados = {}
+        print("🔊 Sons restaurados")
+    end,
+}
+
+print("🎬 Glitch de Tela v6 carregado! (tudo em ciano)")
