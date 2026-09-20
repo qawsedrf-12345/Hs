@@ -1,7 +1,134 @@
 --=============================================================
--- 🛡️ ANTI-VOID v7 — Prioriza SEMPRE a superfície mais ALTA
--- Coleta candidatos em espiral e escolhe o de MAIOR Y.
--- Assim caindo de um prédio → TP no topo do prédio, não no chão.
+-- 🛡️ ANTI-VOID v8 + ANTI-FLING — Integração Completa
+-- ✓ Correções aplicadas no Anti-Fling
+-- ✓ Flag compartilhada pra evitar conflito entre os dois
+-- ✓ Cooldown entre detecções
+--=============================================================
+
+--=============================================================
+-- 🥊 ANTI-FLING (integrado + corrigido)
+--=============================================================
+local Services = setmetatable({}, {__index = function(Self, Index)
+    local NewService = game:GetService(Index)
+    if NewService then
+        Self[Index] = NewService
+    end
+    return NewService
+end})
+
+local LocalPlayerAF = Services.Players.LocalPlayer
+
+-- 🌐 Flag global compartilhada com o Anti-Void
+getgenv().AntiFlingEmAcao = false
+getgenv().AntiFlingUltimoAviso = 0
+getgenv().AntiFlingCooldown = 0.5   -- segundos entre neutralizações
+
+-- ============================================
+-- 🥊 Camada 1: Vigia outros players
+-- ============================================
+local function PlayerAdded(Player)
+    local Detected = false
+    local Character
+    local PrimaryPart
+
+    local function CharacterAdded(NewCharacter)
+        Character = NewCharacter
+        repeat
+            task.wait()
+            PrimaryPart = NewCharacter:FindFirstChild("HumanoidRootPart")
+        until PrimaryPart
+        Detected = false
+    end
+
+    CharacterAdded(Player.Character or Player.CharacterAdded:Wait())
+    Player.CharacterAdded:Connect(CharacterAdded)
+
+    Services.RunService.Heartbeat:Connect(function()
+        if (Character and Character:IsDescendantOf(workspace)) and (PrimaryPart and PrimaryPart:IsDescendantOf(Character)) then
+            if PrimaryPart.AssemblyAngularVelocity.Magnitude > 50 or PrimaryPart.AssemblyLinearVelocity.Magnitude > 100 then
+                if Detected == false then
+                    pcall(function()
+                        game.StarterGui:SetCore("ChatMakeSystemMessage", {
+                            Text = "Fling Exploit detected, Player: " .. tostring(Player)
+                        })
+                    end)
+                end
+                Detected = true
+                for _, v in ipairs(Character:GetDescendants()) do
+                    if v:IsA("BasePart") then
+                        v.CanCollide = false
+                        v.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                        v.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                        v.CustomPhysicalProperties = PhysicalProperties.new(0, 0, 0)
+                    end
+                end
+                PrimaryPart.CanCollide = false
+                PrimaryPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                PrimaryPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                PrimaryPart.CustomPhysicalProperties = PhysicalProperties.new(0, 0, 0)
+            end
+        end
+    end)
+end
+
+for _, v in ipairs(Services.Players:GetPlayers()) do
+    if v ~= LocalPlayerAF then
+        PlayerAdded(v)
+    end
+end
+Services.Players.PlayerAdded:Connect(PlayerAdded)
+
+-- ============================================
+-- 🥊 Camada 2: Vigia você mesmo (com flag)
+-- ============================================
+local LastPosition = nil
+
+Services.RunService.Heartbeat:Connect(function()
+    pcall(function()
+        local char = LocalPlayerAF.Character
+        if not char then return end
+        local PrimaryPart = char.PrimaryPart
+        if not PrimaryPart then return end
+
+        local velLin = PrimaryPart.AssemblyLinearVelocity.Magnitude
+        local velAng = PrimaryPart.AssemblyAngularVelocity.Magnitude
+
+        -- 🚨 Fling detectado em VOCÊ
+        if velLin > 250 or velAng > 250 then
+            -- 🔒 Marca flag global — Anti-Void vai ignorar esse frame
+            getgenv().AntiFlingEmAcao = true
+
+            PrimaryPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            PrimaryPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            if LastPosition then
+                PrimaryPart.CFrame = LastPosition
+            end
+
+            -- Aviso no chat (com cooldown pra não spammar)
+            local agora = os.clock()
+            if agora - getgenv().AntiFlingUltimoAviso > 1 then
+                getgenv().AntiFlingUltimoAviso = agora
+                pcall(function()
+                    game.StarterGui:SetCore("ChatMakeSystemMessage", {
+                        Text = "You were flung. Neutralizing velocity."
+                    })
+                end)
+            end
+
+            -- 🔓 Libera a flag depois de 0.1s
+            task.delay(0.1, function()
+                getgenv().AntiFlingEmAcao = false
+            end)
+        elseif velLin < 50 and velAng < 50 then
+            -- ✅ Estado normal → salva posição
+            LastPosition = PrimaryPart.CFrame
+        end
+    end)
+end)
+
+
+--=============================================================
+-- 🛡️ ANTI-VOID v8 (prioriza superfície mais alta)
 --=============================================================
 
 local Players    = game:GetService("Players")
@@ -22,21 +149,16 @@ local CONFIG = {
 
     VelocidadeMinimaCaindo = -25,
 
-    -- 🔍 Busca
     RaioInicial    = 5,
     RaioIncremento = 5,
     RaioMaximo     = 3000,
     PassosPorAnel  = 20,
-    AlturaAcima    = 150,     -- procura bastante pra cima (topo de prédio)
+    AlturaAcima    = 150,
     AlturaAbaixo   = 500,
     DotMinimoPisavel = 0.6,
 
-    -- 🎯 Prioridade
-    -- Coleta TODOS os candidatos e escolhe o de MAIOR Y.
-    -- Se dois tiverem Y próximo, prioriza o mais perto lateralmente.
-    ToleranciaY = 3,          -- se diferença de Y < 3, considera empate (aí usa menor distância)
+    ToleranciaY = 3,
 
-    -- 🎨 Cores
     CorFade    = Color3.fromRGB(0, 220, 255),
     CorEfeito  = Color3.fromRGB(50, 255, 130),
     CorRGB     = Color3.fromRGB(0, 255, 255),
@@ -467,10 +589,7 @@ local function efeitoTeleporte()
 end
 
 --=============================================================
--- 🔍 BUSCAR SUPERFÍCIE MAIS ALTA (prioridade absoluta)
--- 1️⃣ Coleta TODOS os candidatos pisáveis num raio grande
--- 2️⃣ Escolhe o de MAIOR Y
--- 3️⃣ Em empate de Y (diferença < ToleranciaY), escolhe o mais PERTO
+-- 🔍 BUSCAR SUPERFÍCIE MAIS ALTA
 --=============================================================
 local function buscarSuperficiePisavel(posicao, character)
     local params = RaycastParams.new()
@@ -510,9 +629,6 @@ local function buscarSuperficiePisavel(posicao, character)
             end
         end
 
-        -- 🔥 Early exit: se achou candidatos E já passou de uns 3 anéis
-        -- sem achar nada mais alto, para de procurar.
-        -- (evita percorrer 3000 studs à toa)
         if #candidatos > 0 and raio >= CONFIG.RaioInicial * 4 then
             break
         end
@@ -525,23 +641,20 @@ local function buscarSuperficiePisavel(posicao, character)
         return nil
     end
 
-    -- 🏆 Escolhe o mais ALTO (maior Y)
     local melhor = candidatos[1]
     for _, c in ipairs(candidatos) do
         local dY = c.posicao.Y - melhor.posicao.Y
 
         if dY > toleranciaY then
-            -- claramente mais alto → substitui
             melhor = c
         elseif math.abs(dY) <= toleranciaY then
-            -- empate técnico → escolhe o de menor raio (mais perto lateralmente)
             if c.raio < melhor.raio then
                 melhor = c
             end
         end
     end
 
-    log(string.format("🎯 Escolhido: Y=%.1f | raio=%d | %d candidatos no total",
+    log(string.format("🎯 Escolhido: Y=%.1f | raio=%d | %d candidatos",
         melhor.posicao.Y, melhor.raio, #candidatos))
 
     return melhor.posicao
@@ -622,7 +735,7 @@ local function ativarJanelaPosRespawn()
 end
 
 --=============================================================
--- 🎯 DETECÇÃO
+-- 🎯 DETECÇÃO (com checagem da flag do Anti-Fling)
 --=============================================================
 RunService.Heartbeat:Connect(function()
     local character = player.Character
@@ -641,6 +754,13 @@ RunService.Heartbeat:Connect(function()
         return
     end
     if humanoid.Health <= 0 then
+        tempoCaindo = 0
+        ultimaPos = nil
+        return
+    end
+
+    -- 🚫 ANTI-FLING ESTÁ ATUANDO → ignora esse frame
+    if getgenv().AntiFlingEmAcao then
         tempoCaindo = 0
         ultimaPos = nil
         return
@@ -714,4 +834,4 @@ if player.Character then
     end)
 end
 
-print("🛡️ Anti-Void v7 (prioriza SEMPRE a superfície mais ALTA) carregado!")
+print("🛡️ Anti-Void v8 + Anti-Fling (integração otimizada) — carregado!")
