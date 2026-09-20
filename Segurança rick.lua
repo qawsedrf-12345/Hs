@@ -1,128 +1,13 @@
 --=============================================================
--- 🛡️ ANTI-VOID v9 + ANTI-FLING — Completo
--- ✓ Sistema de morte consecutiva (2x em 30s → TP pro local seguro)
--- ✓ Flag compartilhada entre os dois sistemas
--- ✓ Som Lento Global integrado (não cria sons)
+-- 🛡️ ANTI-VOID v9 + 🔊 SOM LENTO + 🎥 ZOOM + 🌊 DISTORÇÃO
 --=============================================================
 
---=============================================================
--- 🥊 ANTI-FLING (integrado)
---=============================================================
-local Services = setmetatable({}, {__index = function(Self, Index)
-    local NewService = game:GetService(Index)
-    if NewService then
-        Self[Index] = NewService
-    end
-    return NewService
-end})
-
-local LocalPlayerAF = Services.Players.LocalPlayer
-
-getgenv().AntiFlingEmAcao = false
-getgenv().AntiFlingUltimoAviso = 0
-
-local function PlayerAdded(Player)
-    local Detected = false
-    local Character
-    local PrimaryPart
-
-    local function CharacterAdded(NewCharacter)
-        Character = NewCharacter
-        repeat
-            task.wait()
-            PrimaryPart = NewCharacter:FindFirstChild("HumanoidRootPart")
-        until PrimaryPart
-        Detected = false
-    end
-
-    CharacterAdded(Player.Character or Player.CharacterAdded:Wait())
-    Player.CharacterAdded:Connect(CharacterAdded)
-
-    Services.RunService.Heartbeat:Connect(function()
-        if (Character and Character:IsDescendantOf(workspace)) and (PrimaryPart and PrimaryPart:IsDescendantOf(Character)) then
-            if PrimaryPart.AssemblyAngularVelocity.Magnitude > 50 or PrimaryPart.AssemblyLinearVelocity.Magnitude > 100 then
-                if Detected == false then
-                    pcall(function()
-                        game.StarterGui:SetCore("ChatMakeSystemMessage", {
-                            Text = "Fling Exploit detected, Player: " .. tostring(Player)
-                        })
-                    end)
-                end
-                Detected = true
-                for _, v in ipairs(Character:GetDescendants()) do
-                    if v:IsA("BasePart") then
-                        v.CanCollide = false
-                        v.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-                        v.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                        v.CustomPhysicalProperties = PhysicalProperties.new(0, 0, 0)
-                    end
-                end
-                PrimaryPart.CanCollide = false
-                PrimaryPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-                PrimaryPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                PrimaryPart.CustomPhysicalProperties = PhysicalProperties.new(0, 0, 0)
-            end
-        end
-    end)
-end
-
-for _, v in ipairs(Services.Players:GetPlayers()) do
-    if v ~= LocalPlayerAF then
-        PlayerAdded(v)
-    end
-end
-Services.Players.PlayerAdded:Connect(PlayerAdded)
-
-local LastPosition = nil
-
-Services.RunService.Heartbeat:Connect(function()
-    pcall(function()
-        local char = LocalPlayerAF.Character
-        if not char then return end
-        local PrimaryPart = char.PrimaryPart
-        if not PrimaryPart then return end
-
-        local velLin = PrimaryPart.AssemblyLinearVelocity.Magnitude
-        local velAng = PrimaryPart.AssemblyAngularVelocity.Magnitude
-
-        if velLin > 250 or velAng > 250 then
-            getgenv().AntiFlingEmAcao = true
-
-            PrimaryPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-            PrimaryPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-            if LastPosition then
-                PrimaryPart.CFrame = LastPosition
-            end
-
-            local agora = os.clock()
-            if agora - getgenv().AntiFlingUltimoAviso > 1 then
-                getgenv().AntiFlingUltimoAviso = agora
-                pcall(function()
-                    game.StarterGui:SetCore("ChatMakeSystemMessage", {
-                        Text = "You were flung. Neutralizing velocity."
-                    })
-                end)
-            end
-
-            task.delay(0.1, function()
-                getgenv().AntiFlingEmAcao = false
-            end)
-        elseif velLin < 50 and velAng < 50 then
-            LastPosition = PrimaryPart.CFrame
-        end
-    end)
-end)
-
-
---=============================================================
--- 🛡️ ANTI-VOID v9
---=============================================================
-
-local Players    = game:GetService("Players")
-local RunService = game:GetService("RunService")
+local Players      = game:GetService("Players")
+local RunService   = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
-local Lighting   = game:GetService("Lighting")
+local Lighting     = game:GetService("Lighting")
 local SoundService = game:GetService("SoundService")
+local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 
@@ -152,6 +37,19 @@ local CONFIG = {
     -- ☠️ Sistema de mortes consecutivas
     MortesLimite    = 2,
     JanelaMortes    = 30,
+
+    -- 🎥 ZOOM INFINITO
+    ZoomAtivo       = true,
+    ZoomMaximo      = 10000,   -- studs máximos de zoom
+    ZoomMinimo      = 0.5,     -- studs mínimos (perto)
+    FOVZoomOut      = 40,      -- FOV quando longe (opcional)
+
+    -- 🌊 DISTORÇÃO VISUAL (contínua, estilo "embaixo d'água")
+    DistorcaoAtiva  = true,
+    DistorcaoAtivaIntensidade = 0.5,
+    DistorcaoOndaVelocidade    = 1.0,
+    DistorcaoBlurTamanho       = 0,     -- 0 = sem blur extra
+    DistorcaoCorTint           = Color3.fromRGB(255, 255, 255),
 
     -- 🎨 Cores
     CorFade    = Color3.fromRGB(0, 220, 255),
@@ -191,7 +89,7 @@ local CONFIG = {
 
     -- 🔊 SOM LENTO GLOBAL
     SomLentoAtivo       = true,
-    SomLentoVelocidade  = 0.6,   -- 0.6 = 60% da velocidade
+    SomLentoVelocidade  = 0.75,
     SomLentoVolumeMult  = 1.0,
 
     Debug = true,
@@ -213,6 +111,86 @@ local ultimaPosicaoSegura = nil
 
 local function log(...)
     if CONFIG.Debug then print("[AntiVoid]", ...) end
+end
+
+--=============================================================
+-- 🎥 ZOOM INFINITO
+--=============================================================
+local function ativarZoomInfinito()
+    if not CONFIG.ZoomAtivo then return end
+
+    pcall(function()
+        player.CameraMaxZoomDistance = CONFIG.ZoomMaximo
+        player.CameraMinZoomDistance = CONFIG.ZoomMinimo
+        log(string.format("🎥 Zoom infinito ativado: %.0f studs", CONFIG.ZoomMaximo))
+    end)
+
+    -- Monitora caso o jogo resete o valor
+    task.spawn(function()
+        while CONFIG.ZoomAtivo do
+            task.wait(2)
+            pcall(function()
+                if player.CameraMaxZoomDistance < CONFIG.ZoomMaximo then
+                    player.CameraMaxZoomDistance = CONFIG.ZoomMaximo
+                end
+                if player.CameraMinZoomDistance > CONFIG.ZoomMinimo then
+                    player.CameraMinZoomDistance = CONFIG.ZoomMinimo
+                end
+            end)
+        end
+    end)
+end
+
+--=============================================================
+-- 🌊 DISTORÇÃO VISUAL CONTÍNUA
+-- Aplica um "wobble" sutil na câmera + tint de cor
+-- =============================================================
+local function ativarDistorcao()
+    if not CONFIG.DistorcaoAtiva then return end
+
+    -- 1) Tint de cor (ColorCorrectionEffect)
+    local cc = Instance.new("ColorCorrectionEffect")
+    cc.Name = "DistorcaoTint"
+    cc.TintColor = CONFIG.DistorcaoCorTint
+    cc.Saturation = 0.1
+    cc.Contrast = 0.05
+    cc.Brightness = 0.02
+    cc.Parent = Lighting
+
+    -- 2) Blur opcional
+    local blur = nil
+    if CONFIG.DistorcaoBlurTamanho > 0 then
+        blur = Instance.new("BlurEffect")
+        blur.Name = "DistorcaoBlur"
+        blur.Size = CONFIG.DistorcaoBlurTamanho
+        blur.Parent = Lighting
+    end
+
+    -- 3) Wobble da câmera (rotação sutil contínua)
+    task.spawn(function()
+        local camera = workspace.CurrentCamera
+        local tempo = 0
+
+        RunService.RenderStepped:Connect(function(dt)
+            if not CONFIG.DistorcaoAtiva then return end
+            if not camera then
+                camera = workspace.CurrentCamera
+                return
+            end
+
+            tempo = tempo + dt * CONFIG.DistorcaoOndaVelocidade
+            local int = CONFIG.DistorcaoAtivaIntensidade
+
+            -- Wobble senoidal pequeno
+            local rx = math.sin(tempo * 1.3) * int * 0.004
+            local ry = math.cos(tempo * 0.9) * int * 0.004
+            local rz = math.sin(tempo * 1.7) * int * 0.006
+
+            camera.CFrame = camera.CFrame * CFrame.Angles(rx, ry, rz)
+        end)
+    end)
+
+    log("🌊 Distorção visual ativada")
 end
 
 --=============================================================
@@ -798,12 +776,6 @@ RunService.Heartbeat:Connect(function()
         return
     end
 
-    if getgenv().AntiFlingEmAcao then
-        tempoCaindo = 0
-        ultimaPos = nil
-        return
-    end
-
     if hrp.Position.Y > 50 then
         local params = RaycastParams.new()
         params.FilterType = Enum.RaycastFilterType.Exclude
@@ -884,9 +856,7 @@ if player.Character then
 end
 
 --=============================================================
--- 🔊 SOM LENTO GLOBAL (integrado)
--- Deixa TODOS os sons do jogo (que já existem e que forem criados)
--- em câmera lenta. NÃO cria sons próprios.
+-- 🔊 SOM LENTO GLOBAL 0.75x
 --=============================================================
 local sonsModificados = {}
 
@@ -896,7 +866,6 @@ local function aplicarSomLento(som)
     if sonsModificados[som] then return end
 
     pcall(function()
-        -- Salva valor original (caso precise restaurar)
         if not som:GetAttribute("_PitchOriginal") then
             som:SetAttribute("_PitchOriginal", som.PlaybackSpeed)
         end
@@ -904,10 +873,8 @@ local function aplicarSomLento(som)
             som:SetAttribute("_VolumeOriginal", som.Volume)
         end
 
-        -- Aplica velocidade lenta
         som.PlaybackSpeed = CONFIG.SomLentoVelocidade
 
-        -- Aplica volume (opcional)
         if CONFIG.SomLentoVolumeMult ~= 1 then
             local volOrig = som:GetAttribute("_VolumeOriginal") or som.Volume
             som.Volume = volOrig * CONFIG.SomLentoVolumeMult
@@ -920,17 +887,14 @@ end
 local function aplicarSomLentoEmTudo()
     if not CONFIG.SomLentoAtivo then return end
 
-    -- 1) SoundService
     for _, som in ipairs(SoundService:GetDescendants()) do
         if som:IsA("Sound") then aplicarSomLento(som) end
     end
 
-    -- 2) Workspace
     for _, som in ipairs(workspace:GetDescendants()) do
         if som:IsA("Sound") then aplicarSomLento(som) end
     end
 
-    -- 3) Players (sons dos outros jogadores)
     for _, plr in ipairs(Players:GetPlayers()) do
         for _, som in ipairs(plr:GetDescendants()) do
             if som:IsA("Sound") then aplicarSomLento(som) end
@@ -981,12 +945,10 @@ local function loopReaplicarSomLento()
     end)
 end
 
--- Init do som lento
 aplicarSomLentoEmTudo()
 monitorarNovosSons()
 loopReaplicarSomLento()
 
--- API pública do som lento
 getgenv().SomLento = {
     restaurar = function()
         for som in pairs(sonsModificados) do
@@ -1015,4 +977,10 @@ getgenv().SomLento = {
     end,
 }
 
-print("🛡️ Anti-Void v9 + Anti-Fling + 🔊 Som Lento — carregado!")
+--=============================================================
+-- INIT
+--=============================================================
+ativarZoomInfinito()
+ativarDistorcao()
+
+print("🛡️ Anti-Void v9 + 🔊 Som Lento + 🎥 Zoom + 🌊 Distorção — carregado!")
