@@ -1,14 +1,13 @@
 --=============================================================
--- 🛡️ ANTI-VOID v9 + 🔊 SOM LENTO 0.75x
+-- 🛡️ ANTI-VOID v10
 -- ✓ Sistema de morte consecutiva (2x em 30s → TP pro local seguro)
--- ✓ Som Lento Global em 0.75x (não cria sons)
+-- ✓ Desativação pós-respawn de 3s (evita TP pra cima de teto)
 --=============================================================
 
 local Players      = game:GetService("Players")
 local RunService   = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local Lighting     = game:GetService("Lighting")
-local SoundService = game:GetService("SoundService")
 
 local player = Players.LocalPlayer
 
@@ -21,6 +20,10 @@ local CONFIG = {
     TempoCaindoLimite  = 0.2,
     TempoCaindoNormal  = 0.4,
     OffsetY            = 3,
+
+    -- 🆕 Desativação pós-respawn (evita TP pra cima de teto)
+    DesativarPosRespawn = true,
+    DuracaoDesativado   = 3,
 
     VelocidadeMinimaCaindo = -25,
 
@@ -75,11 +78,6 @@ local CONFIG = {
     EfeitoFeixe      = true,
     FeixeDuracao     = 0.6,
 
-    -- 🔊 SOM LENTO GLOBAL
-    SomLentoAtivo       = true,
-    SomLentoVelocidade  = 0.75,   -- 0.75x
-    SomLentoVolumeMult  = 1.0,
-
     Debug = true,
 }
 
@@ -93,6 +91,10 @@ local ultimaPos = nil
 
 local localSeguroAtivo = false
 local localSeguroExpira = 0
+
+-- Desativação pós-respawn
+local antiVoidDesativado = false
+local desativadoExpira = 0
 
 local historicoMortes = {}
 local ultimaPosicaoSegura = nil
@@ -662,6 +664,25 @@ local function ativarJanelaPosRespawn()
     end)
 end
 
+local function ativarDesativacaoPosRespawn()
+    antiVoidDesativado = true
+    desativadoExpira = os.clock() + CONFIG.DuracaoDesativado
+
+    log(string.format("🛑 Anti-Void DESATIVADO por %.1fs (pós-respawn)", CONFIG.DuracaoDesativado))
+
+    task.spawn(function()
+        while os.clock() < desativadoExpira do
+            task.wait(0.1)
+            if not antiVoidDesativado then return end
+        end
+        antiVoidDesativado = false
+        log("✅ Anti-Void REATIVADO")
+    end)
+end
+
+--=============================================================
+-- 🔍 LOOP DE DETECÇÃO
+--=============================================================
 RunService.Heartbeat:Connect(function()
     local character = player.Character
     if not character then
@@ -679,6 +700,13 @@ RunService.Heartbeat:Connect(function()
         return
     end
     if humanoid.Health <= 0 then
+        tempoCaindo = 0
+        ultimaPos = nil
+        return
+    end
+
+    -- 🛑 Anti-Void desativado (pós-respawn)?
+    if CONFIG.DesativarPosRespawn and antiVoidDesativado and os.clock() < desativadoExpira then
         tempoCaindo = 0
         ultimaPos = nil
         return
@@ -744,10 +772,15 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
+--=============================================================
+-- 🔄 RESPAWN
+--=============================================================
 player.CharacterAdded:Connect(function(character)
     log("🔄 CharacterAdded")
 
     registrarMorte()
+
+    ativarDesativacaoPosRespawn()
 
     task.wait(0.2)
     ativarJanelaPosRespawn()
@@ -763,128 +796,4 @@ if player.Character then
     end)
 end
 
---=============================================================
--- 🔊 SOM LENTO GLOBAL 0.75x (integrado)
--- Deixa TODOS os sons do jogo (que já existem e que forem criados)
--- em câmera lenta. NÃO cria sons próprios.
---=============================================================
-local sonsModificados = {}
-
-local function aplicarSomLento(som)
-    if not som or not som:IsA("Sound") then return end
-    if not CONFIG.SomLentoAtivo then return end
-    if sonsModificados[som] then return end
-
-    pcall(function()
-        if not som:GetAttribute("_PitchOriginal") then
-            som:SetAttribute("_PitchOriginal", som.PlaybackSpeed)
-        end
-        if not som:GetAttribute("_VolumeOriginal") then
-            som:SetAttribute("_VolumeOriginal", som.Volume)
-        end
-
-        som.PlaybackSpeed = CONFIG.SomLentoVelocidade
-
-        if CONFIG.SomLentoVolumeMult ~= 1 then
-            local volOrig = som:GetAttribute("_VolumeOriginal") or som.Volume
-            som.Volume = volOrig * CONFIG.SomLentoVolumeMult
-        end
-
-        sonsModificados[som] = true
-    end)
-end
-
-local function aplicarSomLentoEmTudo()
-    if not CONFIG.SomLentoAtivo then return end
-
-    for _, som in ipairs(SoundService:GetDescendants()) do
-        if som:IsA("Sound") then aplicarSomLento(som) end
-    end
-
-    for _, som in ipairs(workspace:GetDescendants()) do
-        if som:IsA("Sound") then aplicarSomLento(som) end
-    end
-
-    for _, plr in ipairs(Players:GetPlayers()) do
-        for _, som in ipairs(plr:GetDescendants()) do
-            if som:IsA("Sound") then aplicarSomLento(som) end
-        end
-    end
-end
-
-local function monitorarNovosSons()
-    SoundService.DescendantAdded:Connect(function(obj)
-        if obj:IsA("Sound") then
-            task.wait(0.05)
-            aplicarSomLento(obj)
-        end
-    end)
-
-    workspace.DescendantAdded:Connect(function(obj)
-        if obj:IsA("Sound") then
-            task.wait(0.05)
-            aplicarSomLento(obj)
-        end
-    end)
-
-    for _, plr in ipairs(Players:GetPlayers()) do
-        plr.DescendantAdded:Connect(function(obj)
-            if obj:IsA("Sound") then
-                task.wait(0.05)
-                aplicarSomLento(obj)
-            end
-        end)
-    end
-
-    Players.PlayerAdded:Connect(function(plr)
-        plr.DescendantAdded:Connect(function(obj)
-            if obj:IsA("Sound") then
-                task.wait(0.05)
-                aplicarSomLento(obj)
-            end
-        end)
-    end)
-end
-
-local function loopReaplicarSomLento()
-    task.spawn(function()
-        while true do
-            task.wait(3)
-            aplicarSomLentoEmTudo()
-        end
-    end)
-end
-
-aplicarSomLentoEmTudo()
-monitorarNovosSons()
-loopReaplicarSomLento()
-
-getgenv().SomLento = {
-    restaurar = function()
-        for som in pairs(sonsModificados) do
-            pcall(function()
-                if som and som.Parent then
-                    local pitch = som:GetAttribute("_PitchOriginal")
-                    local vol   = som:GetAttribute("_VolumeOriginal")
-                    if pitch then som.PlaybackSpeed = pitch end
-                    if vol then som.Volume = vol end
-                end
-            end)
-        end
-        sonsModificados = {}
-        print("🔊 Sons restaurados")
-    end,
-    mudarVelocidade = function(novaVelocidade)
-        CONFIG.SomLentoVelocidade = novaVelocidade
-        for som in pairs(sonsModificados) do
-            pcall(function()
-                if som and som.Parent then
-                    som.PlaybackSpeed = novaVelocidade
-                end
-            end)
-        end
-        print("🔊 Velocidade alterada para", novaVelocidade)
-    end,
-}
-
-print("🛡️ Anti-Void v9 + 🔊 Som Lento 0.75x — carregado!")
+print("🛡️ Anti-Void v10 (desativa 3s pós-respawn) carregado!")
