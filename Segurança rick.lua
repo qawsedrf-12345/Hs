@@ -1,7 +1,8 @@
 --=============================================================
--- 🛡️ ANTI-VOID v10
+-- 🛡️ ANTI-VOID v11
 -- ✓ Sistema de morte consecutiva (2x em 30s → TP pro local seguro)
 -- ✓ Desativação pós-respawn de 3s (evita TP pra cima de teto)
+-- ✓ 🔒 Bloqueio de teleporte forçado (detecta TP suspeito)
 --=============================================================
 
 local Players      = game:GetService("Players")
@@ -21,7 +22,7 @@ local CONFIG = {
     TempoCaindoNormal  = 0.4,
     OffsetY            = 3,
 
-    -- 🆕 Desativação pós-respawn (evita TP pra cima de teto)
+    -- 🆕 Desativação pós-respawn
     DesativarPosRespawn = true,
     DuracaoDesativado   = 3,
 
@@ -41,6 +42,13 @@ local CONFIG = {
     -- ☠️ Sistema de mortes consecutivas
     MortesLimite    = 2,
     JanelaMortes    = 30,
+
+    -- 🔒 Anti-TP forçado
+    AntiTPAtivo             = true,
+    AntiTPDistanciaMax      = 500,     -- distância mínima pra considerar "TP suspeito"
+    AntiTPCooldown          = 2,       -- segundos entre verificações
+    AntiTPIgnorarSeCaindo   = true,    -- ignora se estiver caindo de verdade
+    AntiTPIgnorarSeNoclip   = true,    -- (não aplicável universalmente, mas deixa a flag)
 
     -- 🎨 Cores
     CorFade    = Color3.fromRGB(0, 220, 255),
@@ -92,12 +100,15 @@ local ultimaPos = nil
 local localSeguroAtivo = false
 local localSeguroExpira = 0
 
--- Desativação pós-respawn
 local antiVoidDesativado = false
 local desativadoExpira = 0
 
 local historicoMortes = {}
 local ultimaPosicaoSegura = nil
+
+-- 🔒 Anti-TP forçado
+local ultimaPosAntiTP = nil
+local ultimoCheckAntiTP = 0
 
 local function log(...)
     if CONFIG.Debug then print("[AntiVoid]", ...) end
@@ -591,6 +602,7 @@ local function teleportarParaSuperficie(character, motivo)
     tempoCaindo = 0
     ultimoTempo = os.clock()
     ultimaPos = nil
+    ultimaPosAntiTP = nil   -- 🔒 reseta anti-TP após TP legítimo
 
     local cooldown = localSeguroAtivo and 0.3 or 1.5
     task.wait(cooldown)
@@ -681,6 +693,69 @@ local function ativarDesativacaoPosRespawn()
 end
 
 --=============================================================
+-- 🔒 ANTI-TP FORÇADO
+-- Verifica se a posição mudou bruscamente sem ser por TP legítimo
+--=============================================================
+local function verificarAntiTP(character, hrp, humanoid, agora)
+    if not CONFIG.AntiTPAtivo then return end
+    if tpCooldown then return end
+
+    -- Cooldown do anti-TP
+    if agora - ultimoCheckAntiTP < CONFIG.AntiTPCooldown then return end
+
+    -- Primeira verificação: salva a posição
+    if not ultimaPosAntiTP then
+        ultimaPosAntiTP = hrp.Position
+        ultimoCheckAntiTP = agora
+        return
+    end
+
+    -- Distância percorrida desde a última verificação
+    local distancia = (hrp.Position - ultimaPosAntiTP).Magnitude
+
+    -- Ignora se estiver caindo (velocidade vertical alta)
+    if CONFIG.AntiTPIgnorarSeCaindo then
+        local velY = hrp.AssemblyLinearVelocity.Y
+        if velY < -50 then
+            ultimaPosAntiTP = hrp.Position
+            ultimoCheckAntiTP = agora
+            return
+        end
+    end
+
+    -- Ignora se estiver na janela pós-respawn (anti-void desativado)
+    if antiVoidDesativado and os.clock() < desativadoExpira then
+        ultimaPosAntiTP = hrp.Position
+        ultimoCheckAntiTP = agora
+        return
+    end
+
+    -- Detectou TP suspeito?
+    if distancia > CONFIG.AntiTPDistanciaMax then
+        log(string.format("🔒 TP FORÇADO DETECTADO! Distância: %.0f studs", distancia))
+
+        -- Devolve o player pra posição anterior
+        local posicaoAnterior = ultimaPosAntiTP
+        local rotacaoAtual = hrp.CFrame - hrp.CFrame.Position
+
+        hrp.CFrame = CFrame.new(posicaoAnterior + Vector3.new(0, 3, 0)) * rotacaoAtual
+        hrp.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+        hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+
+        -- Efeito visual
+        efeitoTeleporte()
+
+        ultimaPosAntiTP = posicaoAnterior
+        ultimoCheckAntiTP = agora
+        return
+    end
+
+    -- Atualiza a posição
+    ultimaPosAntiTP = hrp.Position
+    ultimoCheckAntiTP = agora
+end
+
+--=============================================================
 -- 🔍 LOOP DE DETECÇÃO
 --=============================================================
 RunService.Heartbeat:Connect(function()
@@ -688,6 +763,7 @@ RunService.Heartbeat:Connect(function()
     if not character then
         tempoCaindo = 0
         ultimaPos = nil
+        ultimaPosAntiTP = nil
         return
     end
 
@@ -697,13 +773,20 @@ RunService.Heartbeat:Connect(function()
     if not hrp or not humanoid then
         tempoCaindo = 0
         ultimaPos = nil
+        ultimaPosAntiTP = nil
         return
     end
     if humanoid.Health <= 0 then
         tempoCaindo = 0
         ultimaPos = nil
+        ultimaPosAntiTP = nil
         return
     end
+
+    local agora = os.clock()
+
+    -- 🔒 Verifica TP forçado ANTES de tudo
+    verificarAntiTP(character, hrp, humanoid, agora)
 
     -- 🛑 Anti-Void desativado (pós-respawn)?
     if CONFIG.DesativarPosRespawn and antiVoidDesativado and os.clock() < desativadoExpira then
@@ -723,7 +806,6 @@ RunService.Heartbeat:Connect(function()
         end
     end
 
-    local agora = os.clock()
     local dt = agora - ultimoTempo
     ultimoTempo = agora
 
@@ -782,6 +864,10 @@ player.CharacterAdded:Connect(function(character)
 
     ativarDesativacaoPosRespawn()
 
+    -- 🔒 Reset do anti-TP no respawn
+    ultimaPosAntiTP = nil
+    ultimoCheckAntiTP = 0
+
     task.wait(0.2)
     ativarJanelaPosRespawn()
     tempoCaindo = 0
@@ -796,4 +882,4 @@ if player.Character then
     end)
 end
 
-print("🛡️ Anti-Void v10 (desativa 3s pós-respawn) carregado!")
+print("🛡️ Anti-Void v11 (+ Anti-TP forçado) carregado!")
