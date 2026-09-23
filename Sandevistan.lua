@@ -2,6 +2,7 @@
 -- SANDEVISTAN v2 — Toggle real: ativa/desativa no clique
 -- Tecla: F | Duração: 3.5s | Vel: 38 | Pulo: Normal
 -- Clique/tecla OFF → flash preto + delete clones + som off
+-- ✅ Outros jogadores se movem normalmente (freeze removido)
 --=============================================================
 
 --=============================================================
@@ -666,15 +667,12 @@ local function blackFlash()
     flash.ZIndex = 9999
     flash.Parent = gui
 
-    -- flash rápido: 0 → 0.05s
     local tweenIn = TweenService:Create(flash, TweenInfo.new(0.05), { BackgroundTransparency = 0 })
     tweenIn:Play()
     tweenIn.Completed:Wait()
 
-    -- segura por 0.1s
     task.wait(0.1)
 
-    -- sai rápido
     local tweenOut = TweenService:Create(flash, TweenInfo.new(0.15), { BackgroundTransparency = 1 })
     tweenOut:Play()
     tweenOut.Completed:Wait()
@@ -852,30 +850,12 @@ local function setTimeScale(scale)
 end
 
 --=============================================================
--- ✨ FREEZE OUTROS
+-- ✨ FREEZE OUTROS — DESATIVADO
+-- Outros jogadores continuam se movendo normalmente.
+-- A função foi mantida vazia para compatibilidade com o resto do script.
 --=============================================================
 local function freezeOthers(freeze)
-    if freeze then
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= player and p.Character then
-                for _, part in ipairs(p.Character:GetDescendants()) do
-                    if part:IsA("BasePart") then
-                        if frozenStates[part] == nil then
-                            frozenStates[part] = part.Anchored
-                        end
-                        part.Anchored = true
-                    end
-                end
-            end
-        end
-    else
-        for part, original in pairs(frozenStates) do
-            if part and part.Parent then
-                pcall(function() part.Anchored = original end)
-            end
-        end
-        table.clear(frozenStates)
-    end
+    -- Não faz nada intencionalmente.
 end
 
 --=============================================================
@@ -969,7 +949,7 @@ activate = function()
 
     setVisuals(true)
     setTimeScale(0.1)
-    freezeOthers(true)
+    -- freezeOthers(true) — REMOVIDO: outros players se movem normalmente
 
     pcall(function()
         sound:Play()
@@ -1030,7 +1010,7 @@ deactivate = function()
     -- ✅ Remove visual verde + time scale
     setVisuals(false)
     setTimeScale(1)
-    freezeOthers(false)
+    -- freezeOthers(false) — REMOVIDO: outros players se movem normalmente
     deactivateLagSwitch()
 
     -- ✅ Para o áudio imediatamente
@@ -1141,6 +1121,7 @@ local function fullCleanup()
     if sound and sound.Parent then sound:Destroy() end
     if timeSpeed and timeSpeed.Parent then timeSpeed:Destroy() end
 
+    -- frozenStates não é mais usado, mas mantemos por segurança
     for part, original in pairs(frozenStates) do
         if part and part.Parent then
             pcall(function() part.Anchored = original end)
@@ -1157,3 +1138,4 @@ print("✨ SANDEVISTAN v2 — Toggle real + flash preto ao desativar")
 print("[Sandevistan] F ou clique: liga/desliga")
 print("[Sandevistan] Duração automática: 3.5s | Velocidade: 38")
 print("[Sandevistan] Ao desativar: flash preto + delete clones + som off + visual off")
+print("[Sandevistan] ✅ Outros jogadores se movem normalmente")
