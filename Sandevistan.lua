@@ -1,8 +1,7 @@
 --=============================================================
--- SANDEVISTAN v2.1 — Toggle real: ativa/desativa no clique
+-- SANDEVISTAN v2 — Toggle real: ativa/desativa no clique
 -- Tecla: F | Duração: 3.5s | Vel: 38 | Pulo: Normal
 -- Clique/tecla OFF → flash preto + delete clones + som off
--- Compatível com executor Delta
 --=============================================================
 
 --=============================================================
@@ -28,7 +27,7 @@ if getgenv and getgenv().SandevistanCleanup then
 end
 
 --=============================================================
--- ⚡ GUI PARENT (fallback em cascata)
+-- ⚡ GUI PARENT
 --=============================================================
 local GUI_PARENT
 do
@@ -83,13 +82,13 @@ local isActive = false
 local isDeactivating = false
 local flashGui = nil
 local currentShakeConnection = nil
-local currentShakeGen = 0
 local deactivateCoroutine = nil
 local character, humanoid
 local cloneSpawning = false
 local cloneTask = nil
 local activeSeat = nil
 local activeWeld = nil
+local frozenStates = {}
 local activeClones = {}
 local connections = {}
 local morphUserId = nil
@@ -102,6 +101,14 @@ local COR_VERDE    = Color3.fromRGB(75, 255, 33)
 local COR_LAVANDA  = Color3.fromRGB(244, 213, 253)
 
 --=============================================================
+-- ⚡ TIME SPEED
+--=============================================================
+local timeSpeed = Instance.new("NumberValue")
+timeSpeed.Name = "TimeSpeed"
+timeSpeed.Value = 1
+timeSpeed.Parent = Workspace
+
+--=============================================================
 -- 🎨 COLOR CORRECTION
 --=============================================================
 local colorCorrection = Instance.new("ColorCorrectionEffect")
@@ -112,7 +119,7 @@ colorCorrection.Parent = Lighting
 -- 🔊 SOM
 --=============================================================
 local sound = Instance.new("Sound")
-sound.Name = "SD_Sound_" .. tostring(player.UserId)
+sound.Name = "SandevistanSound"
 sound.SoundId = "rbxassetid://130840290979991"
 sound.Volume = 1
 sound.Looped = false
@@ -602,11 +609,49 @@ toggleBtn.MouseLeave:Connect(function()
 end)
 
 --=============================================================
--- ✨ FLASH UNIFICADO (branco/ciano na ativação, preto na desativação)
+-- ✨ FLASH BRANCO (ativação)
 --=============================================================
-local function flashScreen(color, inTime, holdTime, outTime)
+local function flashScreen()
+    if flashGui and flashGui.Parent then
+        flashGui:Destroy()
+    end
+
+    flashGui = Instance.new("ScreenGui")
+    flashGui.Name = "SandevistanFlashGui"
+    flashGui.IgnoreGuiInset = true
+    flashGui.ResetOnSpawn = false
+    flashGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+    flashGui.Parent = player:WaitForChild("PlayerGui")
+
+    local flash = Instance.new("Frame")
+    flash.Size = UDim2.new(1, 0, 1, 0)
+    flash.Position = UDim2.new(0, 0, 0, 0)
+    flash.BackgroundColor3 = COR_CIANO
+    flash.BorderSizePixel = 0
+    flash.BackgroundTransparency = 1
+    flash.ZIndex = 999
+    flash.Parent = flashGui
+
+    local tweenIn = TweenService:Create(flash, TweenInfo.new(0.05), { BackgroundTransparency = 0 })
+    tweenIn:Play()
+    tweenIn.Completed:Wait()
+
+    local tweenOut = TweenService:Create(flash, TweenInfo.new(0.3), { BackgroundTransparency = 1 })
+    tweenOut:Play()
+    tweenOut.Completed:Wait()
+
+    if flashGui then
+        flashGui:Destroy()
+        flashGui = nil
+    end
+end
+
+--=============================================================
+-- ✨ FLASH PRETO (desativação)
+--=============================================================
+local function blackFlash()
     local gui = Instance.new("ScreenGui")
-    gui.Name = "SandevistanFlashGui"
+    gui.Name = "SandevistanBlackFlash"
     gui.IgnoreGuiInset = true
     gui.ResetOnSpawn = false
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
@@ -615,56 +660,43 @@ local function flashScreen(color, inTime, holdTime, outTime)
     local flash = Instance.new("Frame")
     flash.Size = UDim2.new(1, 0, 1, 0)
     flash.Position = UDim2.new(0, 0, 0, 0)
-    flash.BackgroundColor3 = color
+    flash.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
     flash.BorderSizePixel = 0
     flash.BackgroundTransparency = 1
     flash.ZIndex = 9999
     flash.Parent = gui
 
-    local tweenIn = TweenService:Create(flash, TweenInfo.new(inTime), { BackgroundTransparency = 0 })
+    -- flash rápido: 0 → 0.05s
+    local tweenIn = TweenService:Create(flash, TweenInfo.new(0.05), { BackgroundTransparency = 0 })
     tweenIn:Play()
     tweenIn.Completed:Wait()
 
-    if holdTime and holdTime > 0 then
-        task.wait(holdTime)
-    end
+    -- segura por 0.1s
+    task.wait(0.1)
 
-    local tweenOut = TweenService:Create(flash, TweenInfo.new(outTime), { BackgroundTransparency = 1 })
+    -- sai rápido
+    local tweenOut = TweenService:Create(flash, TweenInfo.new(0.15), { BackgroundTransparency = 1 })
     tweenOut:Play()
     tweenOut.Completed:Wait()
 
-    if gui and gui.Parent then
-        gui:Destroy()
-    end
+    gui:Destroy()
 end
 
 --=============================================================
--- ✨ CAMERA SHAKE (com token de geração — evita race condition)
+-- ✨ CAMERA SHAKE
 --=============================================================
 local function cameraShake(duration, magnitude)
-    currentShakeGen += 1
-    local myGen = currentShakeGen
-
     if currentShakeConnection then
-        pcall(function() currentShakeConnection:Disconnect() end)
-        currentShakeConnection = nil
+        currentShakeConnection:Disconnect()
     end
-
     local startTime = tick()
     currentShakeConnection = RunService.RenderStepped:Connect(function()
-        if myGen ~= currentShakeGen then
-            return
-        end
-
         local elapsed = tick() - startTime
         if elapsed > duration then
-            if currentShakeConnection then
-                pcall(function() currentShakeConnection:Disconnect() end)
-                currentShakeConnection = nil
-            end
+            currentShakeConnection:Disconnect()
+            currentShakeConnection = nil
             return
         end
-
         local offset = CFrame.new(
             (math.random() - 0.5) * 2 * magnitude,
             (math.random() - 0.5) * 2 * magnitude,
@@ -682,22 +714,14 @@ local function createClone()
     if not character or not character:FindFirstChild("HumanoidRootPart") then return end
     if #activeClones >= MAX_CLONES then return end
 
-    if not character.Archivable then
-        character.Archivable = true
-    end
-
+    character.Archivable = true
     local root = character:FindFirstChild("HumanoidRootPart")
     if not root then return end
 
-    local ok, clone = pcall(function() return character:Clone() end)
-    if not ok or not clone then return end
-
+    local clone = character:Clone()
     clone.Name = "SandevistanClone"
     clone.Parent = workspace
-
-    pcall(function()
-        clone:SetPrimaryPartCFrame(root.CFrame * CFrame.new(0, 1.5, 0))
-    end)
+    clone:SetPrimaryPartCFrame(root.CFrame * CFrame.new(0, 1.5, 0))
 
     local humanoidClone = clone:FindFirstChildOfClass("Humanoid")
     if humanoidClone then humanoidClone:Destroy() end
@@ -775,7 +799,7 @@ local function cleanupClones()
     for _, data in ipairs(copia) do
         local clone = data.clone
         if clone and clone.Parent then
-            pcall(function() clone:Destroy() end)
+            clone:Destroy()
         end
     end
 
@@ -797,7 +821,7 @@ local function startCloneSpawning()
     cloneSpawning = true
     cloneTask = task.spawn(function()
         while cloneSpawning and isActive do
-            pcall(createClone)
+            createClone()
             task.wait(CLONE_INTERVAL)
         end
         cloneTask = nil
@@ -813,12 +837,45 @@ local function stopCloneSpawning()
 end
 
 --=============================================================
--- ✨ VISUAL
+-- ✨ VISUAL / TIME
 --=============================================================
 local function setVisuals(active)
     pcall(function()
         TweenService:Create(colorCorrection, TweenInfo.new(0.4), effectColors[active and "Active" or "Inactive"]):Play()
     end)
+end
+
+local function setTimeScale(scale)
+    pcall(function()
+        TweenService:Create(timeSpeed, TweenInfo.new(0.4), { Value = scale }):Play()
+    end)
+end
+
+--=============================================================
+-- ✨ FREEZE OUTROS
+--=============================================================
+local function freezeOthers(freeze)
+    if freeze then
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= player and p.Character then
+                for _, part in ipairs(p.Character:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        if frozenStates[part] == nil then
+                            frozenStates[part] = part.Anchored
+                        end
+                        part.Anchored = true
+                    end
+                end
+            end
+        end
+    else
+        for part, original in pairs(frozenStates) do
+            if part and part.Parent then
+                pcall(function() part.Anchored = original end)
+            end
+        end
+        table.clear(frozenStates)
+    end
 end
 
 --=============================================================
@@ -847,15 +904,22 @@ local function activateLagSwitch()
     weld.C1 = CFrame.new()
     weld.Parent = seat
     activeWeld = weld
+
+    task.wait()
+    pcall(function()
+        seat.AssemblyAngularVelocity = Vector3.zero
+        seat.AssemblyLinearVelocity = Vector3.zero
+        seat.CFrame = hrp.CFrame
+    end)
 end
 
 local function deactivateLagSwitch()
     if activeWeld then
-        pcall(function() activeWeld:Destroy() end)
+        activeWeld:Destroy()
         activeWeld = nil
     end
     if activeSeat then
-        pcall(function() activeSeat:Destroy() end)
+        activeSeat:Destroy()
         activeSeat = nil
     end
 end
@@ -873,6 +937,7 @@ local function atualizarBotaoUI()
         toggleStroke.Transparency = 0.1
         toggleAccent.BackgroundColor3 = COR_CIANO
         liveDot.BackgroundColor3 = COR_VERDE
+        toggleBtn.Active = true
     else
         toggleLbl.Text = "⚡ SANDEVISTAN [OFF]"
         toggleLbl.TextColor3 = COR_CIANO
@@ -882,6 +947,7 @@ local function atualizarBotaoUI()
         toggleStroke.Transparency = 0.2
         toggleAccent.BackgroundColor3 = COR_CIANO
         liveDot.BackgroundColor3 = COR_CIANO
+        toggleBtn.Active = true
     end
 end
 
@@ -902,6 +968,8 @@ activate = function()
     humanoid.WalkSpeed = BOOSTED_SPEED
 
     setVisuals(true)
+    setTimeScale(0.1)
+    freezeOthers(true)
 
     pcall(function()
         sound:Play()
@@ -910,7 +978,7 @@ activate = function()
     activateLagSwitch()
 
     task.spawn(function()
-        flashScreen(COR_CIANO, 0.05, 0, 0.3)
+        flashScreen()
         cameraShake(0.25, 0.2)
     end)
 
@@ -918,15 +986,14 @@ activate = function()
 
     atualizarBotaoUI()
 
-    if deactivateCoroutine then
+    if deactivateCoroutine and coroutine.status(deactivateCoroutine) == "suspended" then
         pcall(function() coroutine.close(deactivateCoroutine) end)
-        deactivateCoroutine = nil
     end
 
     -- ⏱ Timer automático de 3.5s → desativa sozinho
     deactivateCoroutine = coroutine.create(function()
         task.wait(SANDEVISTAN_DURATION)
-        if isActive and not isDeactivating then
+        if isActive then
             deactivate()
         end
     end)
@@ -942,9 +1009,7 @@ deactivate = function()
     isActive = false
 
     -- 🖤 Flash preto imediato
-    task.spawn(function()
-        flashScreen(Color3.fromRGB(0, 0, 0), 0.05, 0.1, 0.15)
-    end)
+    task.spawn(blackFlash)
 
     -- ✅ Para spawner
     stopCloneSpawning()
@@ -962,18 +1027,21 @@ deactivate = function()
         end)
     end
 
-    -- ✅ Remove visual + lag switch
+    -- ✅ Remove visual verde + time scale
     setVisuals(false)
+    setTimeScale(1)
+    freezeOthers(false)
     deactivateLagSwitch()
 
     -- ✅ Para o áudio imediatamente
     if sound then
         pcall(function()
             sound:Stop()
+            sound.Volume = 1
         end)
     end
 
-    -- ✅ Shake leve no fim
+    -- ✅ Flash + shake levinho no fim
     task.spawn(function()
         cameraShake(0.2, 0.15)
     end)
@@ -981,7 +1049,7 @@ deactivate = function()
     atualizarBotaoUI()
 
     -- ✅ Encerra o coroutine de auto-deactivate se ainda existir
-    if deactivateCoroutine then
+    if deactivateCoroutine and coroutine.status(deactivateCoroutine) == "suspended" then
         pcall(function() coroutine.close(deactivateCoroutine) end)
         deactivateCoroutine = nil
     end
@@ -1010,8 +1078,7 @@ end)
 
 local function bindCharacter(char)
     character = char
-    humanoid = char:WaitForChild("Humanoid", 10)
-    if not humanoid then return end
+    humanoid = char:WaitForChild("Humanoid")
     NORMAL_SPEED = humanoid.WalkSpeed
 
     task.spawn(function()
@@ -1045,20 +1112,9 @@ atualizarBotaoUI()
 task.spawn(function()
     while true do
         task.wait(5)
-
-        -- Clones órfãos
         if not isActive then
             for _, obj in ipairs(workspace:GetChildren()) do
                 if obj.Name == "SandevistanClone" then
-                    pcall(function() obj:Destroy() end)
-                end
-            end
-        end
-
-        -- Som órfão (caso o script morra sem cleanup)
-        for _, obj in ipairs(workspace:GetChildren()) do
-            if obj:IsA("Sound") and obj.Name == "SD_Sound_" .. tostring(player.UserId) then
-                if obj ~= sound then
                     pcall(function() obj:Destroy() end)
                 end
             end
@@ -1079,30 +1135,25 @@ local function fullCleanup()
     pcall(cleanupClones)
     pcall(deactivateLagSwitch)
 
-    if currentShakeConnection then
-        pcall(function() currentShakeConnection:Disconnect() end)
-        currentShakeConnection = nil
-    end
-
+    if flashGui and flashGui.Parent then flashGui:Destroy() end
     if screenGui and screenGui.Parent then screenGui:Destroy() end
     if colorCorrection and colorCorrection.Parent then colorCorrection:Destroy() end
-    if sound and sound.Parent then
-        pcall(function() sound:Stop() end)
-        sound:Destroy()
-    end
+    if sound and sound.Parent then sound:Destroy() end
+    if timeSpeed and timeSpeed.Parent then timeSpeed:Destroy() end
 
-    for _, gui in ipairs(player:WaitForChild("PlayerGui"):GetChildren()) do
-        if gui.Name == "SandevistanFlashGui" then
-            pcall(function() gui:Destroy() end)
+    for part, original in pairs(frozenStates) do
+        if part and part.Parent then
+            pcall(function() part.Anchored = original end)
         end
     end
+    table.clear(frozenStates)
 
     if getgenv then getgenv().SandevistanCleanup = nil end
 end
 
 if getgenv then getgenv().SandevistanCleanup = fullCleanup end
 
-print("✨ SANDEVISTAN v2.1 — Toggle real + flash preto ao desativar")
+print("✨ SANDEVISTAN v2 — Toggle real + flash preto ao desativar")
 print("[Sandevistan] F ou clique: liga/desliga")
 print("[Sandevistan] Duração automática: 3.5s | Velocidade: 38")
 print("[Sandevistan] Ao desativar: flash preto + delete clones + som off + visual off")
