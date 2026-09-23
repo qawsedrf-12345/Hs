@@ -1,5 +1,5 @@
 --=============================================================
--- SANDEVISTAN v2.2 — Toggle real: ativa/desativa no clique
+-- SANDEVISTAN v2.1 — Toggle real: ativa/desativa no clique
 -- Tecla: F | Duração: 3.5s | Vel: 38 | Pulo: Normal
 -- Clique/tecla OFF → flash preto + delete clones + som off
 -- Compatível com executor Delta
@@ -16,12 +16,9 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local CoreGui = game:GetService("CoreGui")
 local TeleportService = game:GetService("TeleportService")
-local SoundService = game:GetService("SoundService") -- ✅ FIX: som 2D
 
 local player = Players.LocalPlayer
-
--- ✅ FIX: cache PlayerGui uma única vez
-local playerGui = player:WaitForChild("PlayerGui", 15)
+local camera = Workspace.CurrentCamera
 
 --=============================================================
 -- ⚡ CLEANUP ANTERIOR
@@ -61,7 +58,8 @@ do
     end
 
     if not GUI_PARENT then
-        if playerGui then GUI_PARENT = playerGui end
+        local ok4, pg = pcall(function() return player:WaitForChild("PlayerGui", 15) end)
+        if ok4 and pg then GUI_PARENT = pg end
     end
 
     if not GUI_PARENT then return end
@@ -71,23 +69,23 @@ end
 -- ⚡ SETTINGS
 --=============================================================
 local TOGGLE_KEY = Enum.KeyCode.F
-local DEFAULT_WALK_SPEED = 16 -- ✅ FIX: default, não sobrescrito
+local NORMAL_SPEED = 16
 local BOOSTED_SPEED = 38
 local SANDEVISTAN_DURATION = 3.5
 local CLONE_INTERVAL = 0.15
-local MAX_CLONES = 15 -- ✅ FIX: limite seguro p/ Highlights
+local MAX_CLONES = 25
 local MORPH_USERNAME = "ZiemekaTheSequel"
-local MORPH_USER_ID = nil -- ✅ FIX: tenta hardcodar depois de descobrir
 
 --=============================================================
 -- ⚡ STATE
 --=============================================================
 local isActive = false
 local isDeactivating = false
+local flashGui = nil
 local currentShakeConnection = nil
 local currentShakeGen = 0
+local deactivateCoroutine = nil
 local character, humanoid
-local restoreWalkSpeed = DEFAULT_WALK_SPEED -- ✅ FIX: preserva velocidade real
 local cloneSpawning = false
 local cloneTask = nil
 local activeSeat = nil
@@ -95,12 +93,9 @@ local activeWeld = nil
 local activeClones = {}
 local connections = {}
 local morphUserId = nil
-local morphedCharacter = nil -- ✅ FIX: morph 1x por char
-local autoOffToken = 0 -- ✅ FIX: token em vez de coroutine
-local lastToggle = 0 -- ✅ FIX: debounce tecla F
 
 --=============================================================
--- 🎨 PALETA
+-- 🎨 PALETA — CIANO, VERDE, LAVANDA
 --=============================================================
 local COR_CIANO    = Color3.fromRGB(0, 240, 255)
 local COR_VERDE    = Color3.fromRGB(75, 255, 33)
@@ -114,23 +109,27 @@ colorCorrection.Name = "SandevistanEffect"
 colorCorrection.Parent = Lighting
 
 --=============================================================
--- 🔊 SOM (2D — parent em SoundService)
+-- 🔊 SOM
 --=============================================================
 local sound = Instance.new("Sound")
 sound.Name = "SD_Sound_" .. tostring(player.UserId)
 sound.SoundId = "rbxassetid://130840290979991"
 sound.Volume = 1
 sound.Looped = false
-sound.Parent = SoundService -- ✅ FIX: 2D em vez de 3D no Workspace
+sound.Parent = Workspace
 
 --=============================================================
 -- 🎨 SEQUÊNCIA DE CORES
 --=============================================================
-local colorSequence = { COR_CIANO, COR_VERDE, COR_LAVANDA }
+local colorSequence = {
+    COR_CIANO,
+    COR_VERDE,
+    COR_LAVANDA
+}
 
 local effectColors = {
-    Active   = { Contrast = 0.5, Saturation = 0.25, TintColor = Color3.fromRGB(85, 255, 127) },
-    Inactive = { Contrast = 0,   Saturation = 0,    TintColor = Color3.new(1, 1, 1) }
+    Active = { Contrast = 0.5, Saturation = 0.25, TintColor = Color3.fromRGB(85, 255, 127) },
+    Inactive = { Contrast = 0, Saturation = 0, TintColor = Color3.new(1, 1, 1) }
 }
 
 --=============================================================
@@ -140,31 +139,28 @@ local function morphIntoUser(targetUserId)
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
 
-    if not char or not hum or not targetUserId then return false end
-
-    -- ✅ FIX: respeita o rig type do jogo (R6/R15)
-    local rigType = hum.RigType
+    if not char or not hum or not targetUserId then
+        return false
+    end
 
     local modelSuccess, generatedModel = pcall(function()
         local desc = Players:GetHumanoidDescriptionFromUserId(targetUserId)
-        return Players:CreateHumanoidModelFromDescription(desc, rigType)
+        return Players:CreateHumanoidModelFromDescription(desc, Enum.HumanoidRigType.R6)
     end)
 
-    if not (modelSuccess and generatedModel) then return false end
+    if not (modelSuccess and generatedModel) then
+        return false
+    end
 
     for _, item in ipairs(char:GetChildren()) do
-        if item:IsA("Accessory") or item:IsA("Clothing") or item:IsA("ShirtGraphic")
-           or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
+        if item:IsA("Accessory") or item:IsA("Clothing") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
             item:Destroy()
         end
     end
 
-    -- ✅ FIX: só aplica cor se AMBOS forem BasePart
     for _, targetItem in ipairs(generatedModel:GetChildren()) do
         local existingPart = char:FindFirstChild(targetItem.Name)
-        if existingPart and existingPart:IsA("BasePart")
-           and targetItem:IsA("BasePart")
-           and existingPart.Name ~= "HumanoidRootPart" then
+        if existingPart and existingPart:IsA("BasePart") and existingPart.Name ~= "HumanoidRootPart" then
             existingPart.Color = targetItem.Color
         end
     end
@@ -189,12 +185,13 @@ local function morphIntoUser(targetUserId)
         if oldMesh then oldMesh:Destroy() end
 
         local newMesh = targetHead:FindFirstChildOfClass("SpecialMesh")
-        if newMesh then newMesh:Clone().Parent = currentHead end
+        if newMesh then
+            newMesh:Clone().Parent = currentHead
+        end
     end
 
     for _, item in ipairs(generatedModel:GetChildren()) do
-        if item:IsA("Clothing") or item:IsA("ShirtGraphic")
-           or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
+        if item:IsA("Clothing") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
             item:Clone().Parent = char
         elseif item:IsA("Accessory") then
             local clonedAccessory = item:Clone()
@@ -225,18 +222,13 @@ end
 
 local function tryMorph()
     if not morphUserId then
-        if MORPH_USER_ID then
-            morphUserId = MORPH_USER_ID
+        local ok, result = pcall(function()
+            return Players:GetUserIdFromNameAsync(MORPH_USERNAME)
+        end)
+        if ok and result then
+            morphUserId = result
         else
-            local ok, result = pcall(function()
-                return Players:GetUserIdFromNameAsync(MORPH_USERNAME)
-            end)
-            if ok and result then
-                morphUserId = result
-                MORPH_USER_ID = result
-            else
-                return false
-            end
+            return false
         end
     end
     return morphIntoUser(morphUserId)
@@ -285,9 +277,7 @@ mainStroke.Parent = mainFrame
 local function fazerCanto(posX, posY, offX, offY)
     local cH = Instance.new("Frame")
     cH.Size = UDim2.new(0, 10, 0, 2)
-    -- ✅ FIX: alinha horizontal no canto inferior
-    local yOff = posY.Offset + (posY.Scale == 1 and -2 or 0)
-    cH.Position = UDim2.new(posX.Scale, posX.Offset + offX, posY.Scale, yOff)
+    cH.Position = UDim2.new(posX.Scale, posX.Offset + offX, posY.Scale, posY.Offset)
     cH.BackgroundColor3 = COR_CIANO
     cH.BorderSizePixel = 0
     cH.ZIndex = 5
@@ -612,7 +602,7 @@ toggleBtn.MouseLeave:Connect(function()
 end)
 
 --=============================================================
--- ✨ FLASH (usa GUI_PARENT pra consistência de ZIndex)
+-- ✨ FLASH UNIFICADO (branco/ciano na ativação, preto na desativação)
 --=============================================================
 local function flashScreen(color, inTime, holdTime, outTime)
     local gui = Instance.new("ScreenGui")
@@ -620,8 +610,7 @@ local function flashScreen(color, inTime, holdTime, outTime)
     gui.IgnoreGuiInset = true
     gui.ResetOnSpawn = false
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
-    gui.DisplayOrder = 9999999 -- ✅ FIX: acima de tudo
-    gui.Parent = GUI_PARENT -- ✅ FIX: mesmo parent do GUI principal
+    gui.Parent = player:WaitForChild("PlayerGui")
 
     local flash = Instance.new("Frame")
     flash.Size = UDim2.new(1, 0, 1, 0)
@@ -636,17 +625,21 @@ local function flashScreen(color, inTime, holdTime, outTime)
     tweenIn:Play()
     tweenIn.Completed:Wait()
 
-    if holdTime and holdTime > 0 then task.wait(holdTime) end
+    if holdTime and holdTime > 0 then
+        task.wait(holdTime)
+    end
 
     local tweenOut = TweenService:Create(flash, TweenInfo.new(outTime), { BackgroundTransparency = 1 })
     tweenOut:Play()
     tweenOut.Completed:Wait()
 
-    if gui and gui.Parent then gui:Destroy() end
+    if gui and gui.Parent then
+        gui:Destroy()
+    end
 end
 
 --=============================================================
--- ✨ CAMERA SHAKE (base CFrame capturado 1x — sem acumulação)
+-- ✨ CAMERA SHAKE (com token de geração — evita race condition)
 --=============================================================
 local function cameraShake(duration, magnitude)
     currentShakeGen += 1
@@ -658,19 +651,13 @@ local function cameraShake(duration, magnitude)
     end
 
     local startTime = tick()
-    local baseCFrame = nil
-
     currentShakeConnection = RunService.RenderStepped:Connect(function()
-        if myGen ~= currentShakeGen then return end
-
-        local cam = Workspace.CurrentCamera
-        if not cam then return end
+        if myGen ~= currentShakeGen then
+            return
+        end
 
         local elapsed = tick() - startTime
         if elapsed > duration then
-            if baseCFrame then
-                pcall(function() cam.CFrame = baseCFrame end)
-            end
             if currentShakeConnection then
                 pcall(function() currentShakeConnection:Disconnect() end)
                 currentShakeConnection = nil
@@ -678,19 +665,12 @@ local function cameraShake(duration, magnitude)
             return
         end
 
-        if not baseCFrame then
-            baseCFrame = cam.CFrame
-        end
-
-        -- ✅ FIX: aplica offset relativo ao base (não acumula)
-        local intensity = 1 - (elapsed / duration)
-        local m = magnitude * intensity
         local offset = CFrame.new(
-            (math.random() - 0.5) * 2 * m,
-            (math.random() - 0.5) * 2 * m,
-            (math.random() - 0.5) * 2 * m
+            (math.random() - 0.5) * 2 * magnitude,
+            (math.random() - 0.5) * 2 * magnitude,
+            (math.random() - 0.5) * 2 * magnitude
         )
-        cam.CFrame = baseCFrame * offset
+        camera.CFrame = camera.CFrame * offset
     end)
 end
 
@@ -700,43 +680,29 @@ end
 local function createClone()
     if not isActive then return end
     if not character or not character:FindFirstChild("HumanoidRootPart") then return end
-
-    -- ✅ FIX: limpa entradas mortas ANTES de checar limite
-    for i = #activeClones, 1, -1 do
-        local c = activeClones[i].clone
-        if not c or not c.Parent then
-            table.remove(activeClones, i)
-        end
-    end
     if #activeClones >= MAX_CLONES then return end
 
-    -- ✅ FIX: preserva Archivable original
-    local wasArchivable = character.Archivable
-    character.Archivable = true
-
-    local root = character:FindFirstChild("HumanoidRootPart")
-    if not root then
-        character.Archivable = wasArchivable
-        return
+    if not character.Archivable then
+        character.Archivable = true
     end
 
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
     local ok, clone = pcall(function() return character:Clone() end)
-    character.Archivable = wasArchivable
     if not ok or not clone then return end
 
     clone.Name = "SandevistanClone"
     clone.Parent = workspace
 
     pcall(function()
-        -- ✅ FIX: PivotTo em vez de SetPrimaryPartCFrame (deprecated)
-        clone:PivotTo(root.CFrame * CFrame.new(0, 1.5, 0))
+        clone:SetPrimaryPartCFrame(root.CFrame * CFrame.new(0, 1.5, 0))
     end)
 
     local humanoidClone = clone:FindFirstChildOfClass("Humanoid")
     if humanoidClone then humanoidClone:Destroy() end
 
     local corInicial = colorSequence[1]
-    local cloneParts = {} -- ✅ FIX: cacheia partes (não varre descendentes toda vez)
 
     for _, obj in ipairs(clone:GetDescendants()) do
         if obj:IsA("BasePart") then
@@ -746,7 +712,6 @@ local function createClone()
             obj.Transparency = 0
             obj.Color = corInicial
             obj.Reflectance = 0
-            table.insert(cloneParts, obj)
         elseif obj:IsA("Decal") then
             obj.Transparency = 1
         elseif obj:IsA("Clothing") then
@@ -757,7 +722,6 @@ local function createClone()
                     part.Color = corInicial
                     part.Transparency = 0
                     part.Material = Enum.Material.Neon
-                    table.insert(cloneParts, part)
                 elseif part:IsA("Decal") then
                     part.Transparency = 1
                 end
@@ -781,16 +745,14 @@ local function createClone()
             index = index % #colorSequence + 1
             local novaCor = colorSequence[index]
 
-            -- ✅ FIX: usa lista cacheada + easing Linear
-            local tweenHL = TweenService:Create(
-                highlight,
-                TweenInfo.new(duration, Enum.EasingStyle.Linear),
-                { FillColor = novaCor, OutlineColor = novaCor }
-            )
+            local tweenHL = TweenService:Create(highlight, TweenInfo.new(duration), {
+                FillColor = novaCor,
+                OutlineColor = novaCor
+            })
             tweenHL:Play()
 
-            for _, obj in ipairs(cloneParts) do
-                if obj and obj.Parent then
+            for _, obj in ipairs(clone:GetDescendants()) do
+                if obj:IsA("BasePart") then
                     obj.Color = novaCor
                 end
             end
@@ -835,9 +797,7 @@ local function startCloneSpawning()
     cloneSpawning = true
     cloneTask = task.spawn(function()
         while cloneSpawning and isActive do
-            -- ✅ FIX: log de erro em vez de silenciar
-            local ok, err = pcall(createClone)
-            if not ok then warn("[Sandevistan] createClone erro:", err) end
+            pcall(createClone)
             task.wait(CLONE_INTERVAL)
         end
         cloneTask = nil
@@ -935,14 +895,17 @@ local activate, deactivate
 --=============================================================
 activate = function()
     if isActive or isDeactivating then return end
-    if not character or not humanoid or not humanoid.Parent then return end
+    if not character or not humanoid then return end
 
     isActive = true
 
     humanoid.WalkSpeed = BOOSTED_SPEED
+
     setVisuals(true)
 
-    pcall(function() sound:Play() end)
+    pcall(function()
+        sound:Play()
+    end)
 
     activateLagSwitch()
 
@@ -952,70 +915,85 @@ activate = function()
     end)
 
     startCloneSpawning()
+
     atualizarBotaoUI()
 
-    -- ✅ FIX: token pattern em vez de coroutine
-    autoOffToken += 1
-    local myToken = autoOffToken
-    task.delay(SANDEVISTAN_DURATION, function()
-        if autoOffToken == myToken and isActive and not isDeactivating then
+    if deactivateCoroutine then
+        pcall(function() coroutine.close(deactivateCoroutine) end)
+        deactivateCoroutine = nil
+    end
+
+    -- ⏱ Timer automático de 3.5s → desativa sozinho
+    deactivateCoroutine = coroutine.create(function()
+        task.wait(SANDEVISTAN_DURATION)
+        if isActive and not isDeactivating then
             deactivate()
         end
     end)
+    coroutine.resume(deactivateCoroutine)
 end
 
 --=============================================================
--- ✨ DESATIVAR
+-- ✨ DESATIVAR — flash preto + delete clones + som off + visual off
 --=============================================================
 deactivate = function()
     if not isActive or isDeactivating then return end
     isDeactivating = true
     isActive = false
 
-    -- invalida auto-off pendente
-    autoOffToken += 1
-
+    -- 🖤 Flash preto imediato
     task.spawn(function()
         flashScreen(Color3.fromRGB(0, 0, 0), 0.05, 0.1, 0.15)
     end)
 
+    -- ✅ Para spawner
     stopCloneSpawning()
+
+    -- ✅ Espera o task terminar
     task.wait(CLONE_INTERVAL * 1.5)
+
+    -- ✅ Delete instantâneo dos clones
     pcall(cleanupClones)
 
-    -- ✅ FIX: usa restoreWalkSpeed preservado
+    -- ✅ Restaura velocidade
     if character and humanoid and humanoid.Parent then
         pcall(function()
-            humanoid.WalkSpeed = restoreWalkSpeed
+            humanoid.WalkSpeed = NORMAL_SPEED
         end)
     end
 
+    -- ✅ Remove visual + lag switch
     setVisuals(false)
     deactivateLagSwitch()
 
+    -- ✅ Para o áudio imediatamente
     if sound then
-        pcall(function() sound:Stop() end)
+        pcall(function()
+            sound:Stop()
+        end)
     end
 
+    -- ✅ Shake leve no fim
     task.spawn(function()
         cameraShake(0.2, 0.15)
     end)
 
     atualizarBotaoUI()
+
+    -- ✅ Encerra o coroutine de auto-deactivate se ainda existir
+    if deactivateCoroutine then
+        pcall(function() coroutine.close(deactivateCoroutine) end)
+        deactivateCoroutine = nil
+    end
+
     isDeactivating = false
 end
 
 --=============================================================
--- ✨ TOGGLE — com debounce
+-- ✨ TOGGLE — ativa se OFF, desativa se ON
 --=============================================================
 local function toggleSandevistan()
     if isDeactivating then return end
-
-    -- ✅ FIX: debounce de 0.3s evita double-trigger
-    local now = tick()
-    if now - lastToggle < 0.3 then return end
-    lastToggle = now
-
     if isActive then
         deactivate()
     else
@@ -1034,36 +1012,20 @@ local function bindCharacter(char)
     character = char
     humanoid = char:WaitForChild("Humanoid", 10)
     if not humanoid then return end
+    NORMAL_SPEED = humanoid.WalkSpeed
 
-    -- ✅ FIX: preserva velocidade original só se for > 0
-    local ws = humanoid.WalkSpeed
-    restoreWalkSpeed = (ws and ws > 0) and ws or DEFAULT_WALK_SPEED
-
-    -- ✅ FIX: morph 1x por character
-    if morphedCharacter ~= char then
-        morphedCharacter = char
-        task.spawn(function()
-            task.wait(0.5)
-            if player.Character ~= char then return end
-            local ok = tryMorph()
-            if ok then
-                print("[Sandevistan] Morph aplicado: " .. MORPH_USERNAME)
-            else
-                warn("[Sandevistan] Falha ao aplicar morph em " .. MORPH_USERNAME)
-            end
-        end)
-    end
+    task.spawn(function()
+        task.wait(0.5)
+        local ok = tryMorph()
+        if ok then
+            print("[Sandevistan] Morph reaplicado: " .. MORPH_USERNAME)
+        else
+            warn("[Sandevistan] Falha ao reaplicar morph em " .. MORPH_USERNAME)
+        end
+    end)
 end
 
--- ✅ FIX: respawn durante efeito → desativa limpo
-local function onCharacterAdded(char)
-    if isActive and not isDeactivating then
-        pcall(deactivate)
-    end
-    bindCharacter(char)
-end
-
-table.insert(connections, player.CharacterAdded:Connect(onCharacterAdded))
+table.insert(connections, player.CharacterAdded:Connect(bindCharacter))
 if player.Character then
     bindCharacter(player.Character)
 end
@@ -1084,6 +1046,7 @@ task.spawn(function()
     while true do
         task.wait(5)
 
+        -- Clones órfãos
         if not isActive then
             for _, obj in ipairs(workspace:GetChildren()) do
                 if obj.Name == "SandevistanClone" then
@@ -1092,7 +1055,8 @@ task.spawn(function()
             end
         end
 
-        for _, obj in ipairs(SoundService:GetChildren()) do
+        -- Som órfão (caso o script morra sem cleanup)
+        for _, obj in ipairs(workspace:GetChildren()) do
             if obj:IsA("Sound") and obj.Name == "SD_Sound_" .. tostring(player.UserId) then
                 if obj ~= sound then
                     pcall(function() obj:Destroy() end)
@@ -1127,20 +1091,9 @@ local function fullCleanup()
         sound:Destroy()
     end
 
-    -- ✅ FIX: FindFirstChild em vez de WaitForChild (evita travar)
-    local pg = player:FindFirstChild("PlayerGui")
-    if pg then
-        for _, gui in ipairs(pg:GetChildren()) do
-            if gui.Name == "SandevistanFlashGui" then
-                pcall(function() gui:Destroy() end)
-            end
-        end
-    end
-    if GUI_PARENT then
-        for _, gui in ipairs(GUI_PARENT:GetChildren()) do
-            if gui.Name == "SandevistanFlashGui" then
-                pcall(function() gui:Destroy() end)
-            end
+    for _, gui in ipairs(player:WaitForChild("PlayerGui"):GetChildren()) do
+        if gui.Name == "SandevistanFlashGui" then
+            pcall(function() gui:Destroy() end)
         end
     end
 
@@ -1149,7 +1102,7 @@ end
 
 if getgenv then getgenv().SandevistanCleanup = fullCleanup end
 
-print("✨ SANDEVISTAN v2.2 — Bugfixes aplicados")
+print("✨ SANDEVISTAN v2.1 — Toggle real + flash preto ao desativar")
 print("[Sandevistan] F ou clique: liga/desliga")
 print("[Sandevistan] Duração automática: 3.5s | Velocidade: 38")
 print("[Sandevistan] Ao desativar: flash preto + delete clones + som off + visual off")
