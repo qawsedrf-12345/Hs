@@ -108,9 +108,9 @@ end
 --=============================================================
 local TOGGLE_KEY            = Enum.KeyCode.F
 local NORMAL_SPEED          = 16
-local BOOSTED_SPEED         = 40
+local BOOSTED_SPEED         = 60
 local SANDEVISTAN_DURATION  = 3.5
-local CLONE_INTERVAL        = 0.15
+local CLONE_INTERVAL        = 0.13
 local MAX_CLONES            = 25
 local TOGGLE_COOLDOWN       = 0.3
 local MORPH_USERNAME        = "ZiemekaTheSequel"
