@@ -1,7 +1,7 @@
 --=============================================================
--- SANDEVISTAN v4.6 — EDGERUNNERS EDITION
+-- SANDEVISTAN v4.9 — EDGERUNNERS EDITION
 -- Velocidade: 60 | Duração: 3.5s | Tecla: F | Char: toggle
--- Fixes: lag switch watchdog, WalkSpeed 0, morph toggle
+-- Revert: usa o próprio Nick/UserId do jogador via morph pipeline
 --=============================================================
 
 --=============================================================
@@ -90,7 +90,7 @@ do
         end
     end
 
-    killChildren(GUI_PARENT,  { "SandevistanGUI", "SandevistanFlashGui", "SandevistanBlackFlash" })
+    killChildren(GUI_PARENT,  { "SandevistanGUI", "SandevistanFlashGui", "SandevistanBlackFlash", "SandevistanToast" })
     killChildren(WS,          { "SandevistanSound", "invischair" })
     killChildren(SoundService,{ "SandevistanSound" })
     killChildren(Lighting,    { "SandevistanEffect", "SandevistanBloom", "SandevistanBlur" })
@@ -123,9 +123,13 @@ local isMorphing            = false
 local glitchPulseRunning    = false
 local normalSpeedCaptured   = false
 local soundReady            = false
-local morphEnabled          = false          -- toggle CHAR (default OFF)
+local soundLoaded           = false
+local morphEnabled          = false
 local lagSwitchWatchdog     = nil
 local flashGui              = nil
+local toastGui              = nil
+local toastTask             = nil
+local durationTask          = nil
 local currentShakeConnection= nil
 local deactivateToken       = 0
 local character, humanoid
@@ -149,6 +153,7 @@ local COR_CIANO    = Color3.fromRGB(0, 240, 255)
 local COR_VERDE    = Color3.fromRGB(75, 255, 33)
 local COR_LAVANDA  = Color3.fromRGB(244, 213, 253)
 local COR_AMARELO  = Color3.fromRGB(255, 215, 0)
+local COR_VERMELHO = Color3.fromRGB(255, 80, 80)
 
 --=============================================================
 -- 🎨 POST-PROCESSING
@@ -179,8 +184,24 @@ task.spawn(function()
         ContentProvider:PreloadAsync({ sound })
     end)
     soundReady = ok
-    if not ok then
-        warn("[Sandevistan] Falha no preload do som.")
+
+    if not sound.IsLoaded then
+        local loaded = false
+        local conn
+        conn = sound.Loaded:Connect(function()
+            loaded = true
+        end)
+        local start = os.clock()
+        while not loaded and (os.clock() - start) < 2 do
+            task.wait(0.05)
+            if sound.IsLoaded then loaded = true end
+        end
+        if conn then pcall(function() conn:Disconnect() end) end
+    end
+    soundLoaded = sound.IsLoaded
+
+    if not ok or not soundLoaded then
+        warn("[Sandevistan] Som não carregado — primeira ativação pode ser silenciosa.")
     end
 end)
 
@@ -221,8 +242,9 @@ local function waitTween(tween, timeout)
 end
 
 --=============================================================
--- ✨ MORPH
+-- ✨ MORPH — pipeline genérico (usado tanto pro morph quanto pro revert)
 --=============================================================
+-- targetUserId: ID do usuário-alvo (pode ser o do morfista OU o do jogador)
 local function morphIntoUser(targetUserId)
     local char = player.Character
     local hum  = char and char:FindFirstChildOfClass("Humanoid")
@@ -313,6 +335,7 @@ local function morphIntoUser(targetUserId)
     return okFinal
 end
 
+-- Morph para o usuário configurado (ZiemekaTheSequel)
 local function tryMorph()
     if isMorphing then return false end
     isMorphing = true
@@ -339,24 +362,141 @@ local function tryMorph()
     return result and true or false
 end
 
+--=============================================================
+-- ✨ REVERT — volta pro char do próprio jogador
+--=============================================================
+-- Pega o NICK do jogador (player.Name) e resolve o ID via API.
+-- Depois usa o MESMO pipeline do morph — sem ApplyDescription,
+-- sem ApplyDescriptionReset, sem cache de cliente.
 local function revertMorph()
-    -- Remove tudo que o morph adicionou, restaurando o char original
-    local ok, err = pcall(function()
-        local char = player.Character
-        if not char or not char.Parent then return end
-        -- Pede ao Roblox para reconstruir o avatar do jogador
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum then
-            pcall(function() hum:ApplyDescriptionReset() end)
+    if isMorphing then
+        -- Espera o morph em progresso terminar (com timeout curto)
+        local start = os.clock()
+        while isMorphing and (os.clock() - start) < 1 do
+            task.wait(0.05)
         end
-    end)
-    if not ok then
-        warn("[Sandevistan] revertMorph erro: " .. tostring(err))
     end
+
+    isMorphing = true
+
+    local ok, result = pcall(function()
+        -- 1) Pega o nick do próprio jogador
+        local myName = player.Name
+        if not myName or myName == "" then
+            warn("[Sandevistan] Não foi possível obter o nick do jogador.")
+            return false
+        end
+
+        -- 2) Resolve o ID do nick
+        local okId, myId = pcall(function()
+            return Players:GetUserIdFromNameAsync(myName)
+        end)
+        if not okId or not myId then
+            warn("[Sandevistan] Falha ao resolver ID do nick: " .. myName)
+            return false
+        end
+
+        -- 3) Aplica o char do próprio jogador via pipeline padrão
+        return morphIntoUser(myId)
+    end)
+
+    isMorphing = false
+    if not ok then
+        warn("[Sandevistan] revertMorph erro: " .. tostring(result))
+        return false
+    end
+    return result and true or false
 end
 
 --=============================================================
--- 🖥️ UI COMPACTA (120×82, 3 elementos)
+-- 🔔 TOAST
+--=============================================================
+local function showToast(message, color)
+    if toastGui and toastGui.Parent then
+        pcall(function() toastGui:Destroy() end)
+    end
+    if toastTask then
+        pcall(function() task.cancel(toastTask) end)
+        toastTask = nil
+    end
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "SandevistanToast"
+    gui.ResetOnSpawn = false
+    gui.IgnoreGuiInset = true
+    gui.DisplayOrder = 1000002
+    local okParent = pcall(function() gui.Parent = GUI_PARENT end)
+    if not okParent or not gui.Parent then
+        pcall(function() gui:Destroy() end)
+        return
+    end
+    toastGui = gui
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 200, 0, 32)
+    frame.Position = UDim2.new(0, 20, 0, -40)
+    frame.BackgroundColor3 = color or COR_CIANO
+    frame.BackgroundTransparency = 0.1
+    frame.BorderSizePixel = 0
+    frame.Parent = gui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 4)
+    corner.Parent = frame
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = COR_CIANO
+    stroke.Thickness = 1
+    stroke.Transparency = 0.3
+    stroke.Parent = frame
+
+    local grad = Instance.new("UIGradient")
+    grad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, COR_CIANO),
+        ColorSequenceKeypoint.new(0.5, COR_VERDE),
+        ColorSequenceKeypoint.new(1, COR_CIANO)
+    })
+    grad.Rotation = 90
+    grad.Parent = frame
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -20, 1, 0)
+    lbl.Position = UDim2.new(0, 10, 0, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = message
+    lbl.TextColor3 = COR_LAVANDA
+    lbl.Font = Enum.Font.Code
+    lbl.TextScaled = true
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = frame
+
+    local sizeConstraint = Instance.new("UITextSizeConstraint")
+    sizeConstraint.MaxTextSize = 12
+    sizeConstraint.MinTextSize = 8
+    sizeConstraint.Parent = lbl
+
+    local tweenIn = TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Position = UDim2.new(0, 20, 0, 20)
+    })
+    tweenIn:Play()
+    waitTween(tweenIn, 0.5)
+
+    task.wait(2)
+
+    local tweenOut = TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quad), {
+        Position = UDim2.new(0, 20, 0, -40)
+    })
+    tweenOut:Play()
+    waitTween(tweenOut, 0.5)
+
+    if toastGui and toastGui.Parent then
+        pcall(function() toastGui:Destroy() end)
+    end
+    toastGui = nil
+end
+
+--=============================================================
+-- 🖥️ UI COMPACTA
 --=============================================================
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "SandevistanGUI"
@@ -384,8 +524,8 @@ overlayStroke.Parent = glitchOverlay
 
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 120, 0, 82)
-mainFrame.Position = UDim2.new(0, 20, 0.35, -41)
+mainFrame.Size = UDim2.new(0, 120, 0, 90)
+mainFrame.Position = UDim2.new(0, 20, 0.35, -45)
 mainFrame.BackgroundColor3 = COR_CIANO
 mainFrame.BackgroundTransparency = 0.15
 mainFrame.BorderSizePixel = 0
@@ -499,9 +639,9 @@ fazerCanto(UDim.new(0, 0), UDim.new(1, 0), 0, -10)
 fazerCanto(UDim.new(1, 0), UDim.new(1, 0), -10, -10)
 
 --=============================================================
--- ✨ HELPER: criar linha de botão
+-- ✨ HELPER: linha de botão
 --=============================================================
-local function makeLine(yPos, width, accentColor)
+local function makeLine(yPos, accentColor)
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.new(0.9, 0, 0, 24)
     btn.Position = UDim2.new(0.05, 0, 0, yPos)
@@ -553,33 +693,32 @@ local function makeLine(yPos, width, accentColor)
     lbl.Text = ""
     lbl.TextColor3 = COR_CIANO
     lbl.Font = Enum.Font.Code
-    lbl.TextSize = 8
+    lbl.TextScaled = true
     lbl.TextXAlignment = Enum.TextXAlignment.Left
     lbl.ZIndex = 5
     lbl.Parent = btn
+
+    local sizeConstraint = Instance.new("UITextSizeConstraint")
+    sizeConstraint.MaxTextSize = 12
+    sizeConstraint.MinTextSize = 8
+    sizeConstraint.Parent = lbl
 
     local hoverScale = Instance.new("UIScale")
     hoverScale.Scale = 1
     hoverScale.Parent = btn
 
-    return {
-        btn = btn,
-        lbl = lbl,
-        stroke = stroke,
-        accent = accent,
-        hoverScale = hoverScale
-    }
+    return { btn = btn, lbl = lbl, stroke = stroke, accent = accent, hoverScale = hoverScale }
 end
 
 --=============================================================
--- ✨ LINHA 1: SANDEVISTAN [OFF/ON]
+-- ✨ LINHA 1: SANDEVISTAN
 --=============================================================
-local sdLine = makeLine(6, 0.9, COR_CIANO)
-local toggleBtn  = sdLine.btn
-local toggleLbl  = sdLine.lbl
-local toggleStroke = sdLine.stroke
-local toggleAccent = sdLine.accent
-local hoverScale = sdLine.hoverScale
+local sdLine = makeLine(6, COR_CIANO)
+local toggleBtn   = sdLine.btn
+local toggleLbl   = sdLine.lbl
+local toggleStroke= sdLine.stroke
+local toggleAccent= sdLine.accent
+local hoverScale  = sdLine.hoverScale
 
 local liveDot = Instance.new("Frame")
 liveDot.Size = UDim2.new(0, 5, 0, 5)
@@ -601,11 +740,11 @@ liveDotStroke.Transparency = 0.3
 liveDotStroke.Parent = liveDot
 
 --=============================================================
--- ✨ LINHA 2: CHAR PERM [OFF/ON]
+-- ✨ LINHA 2: CHAR PERM
 --=============================================================
-local chLine = makeLine(34, 0.9, COR_LAVANDA)
-local charBtn   = chLine.btn
-local charLbl   = chLine.lbl
+local chLine = makeLine(34, COR_LAVANDA)
+local charBtn    = chLine.btn
+local charLbl    = chLine.lbl
 local charStroke = chLine.stroke
 local charAccent = chLine.accent
 local charHoverScale = chLine.hoverScale
@@ -630,7 +769,46 @@ charDotStroke.Transparency = 0.3
 charDotStroke.Parent = charDot
 
 --=============================================================
--- ✨ UI UPDATE (Sandevistan + Char)
+-- ✨ BARRA DE DURAÇÃO
+--=============================================================
+local durationBg = Instance.new("Frame")
+durationBg.Name = "DurationBg"
+durationBg.Size = UDim2.new(0.9, 0, 0, 4)
+durationBg.Position = UDim2.new(0.05, 0, 0, 62)
+durationBg.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+durationBg.BackgroundTransparency = 0.3
+durationBg.BorderSizePixel = 0
+durationBg.ZIndex = 3
+durationBg.Visible = false
+durationBg.Parent = mainFrame
+
+local durationBgCorner = Instance.new("UICorner")
+durationBgCorner.CornerRadius = UDim.new(1, 0)
+durationBgCorner.Parent = durationBg
+
+local durationFill = Instance.new("Frame")
+durationFill.Name = "DurationFill"
+durationFill.Size = UDim2.new(1, 0, 1, 0)
+durationFill.Position = UDim2.new(0, 0, 0, 0)
+durationFill.BackgroundColor3 = COR_VERDE
+durationFill.BorderSizePixel = 0
+durationFill.ZIndex = 4
+durationFill.Parent = durationBg
+
+local durationFillCorner = Instance.new("UICorner")
+durationFillCorner.CornerRadius = UDim.new(1, 0)
+durationFillCorner.Parent = durationFill
+
+local durationGrad = Instance.new("UIGradient")
+durationGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, COR_CIANO),
+    ColorSequenceKeypoint.new(0.5, COR_VERDE),
+    ColorSequenceKeypoint.new(1, COR_AMARELO)
+})
+durationGrad.Parent = durationFill
+
+--=============================================================
+-- ✨ UI UPDATE
 --=============================================================
 local function atualizarBotaoUI()
     if not (screenGui and screenGui.Parent) then return end
@@ -685,6 +863,49 @@ local function atualizarBotaoUI()
 end
 
 --=============================================================
+-- ✨ BARRA DE DURAÇÃO — controle
+--=============================================================
+local function startDurationBar()
+    if not (durationBg and durationBg.Parent) then return end
+    durationBg.Visible = true
+    durationFill.Size = UDim2.new(1, 0, 1, 0)
+
+    if durationTask then
+        pcall(function() task.cancel(durationTask) end)
+    end
+    durationTask = task.spawn(function()
+        local start = os.clock()
+        while running and isActive do
+            local elapsed = os.clock() - start
+            local remaining = 1 - (elapsed / SANDEVISTAN_DURATION)
+            if remaining <= 0 then break end
+            if durationFill and durationFill.Parent then
+                durationFill.Size = UDim2.new(remaining, 0, 1, 0)
+            end
+            task.wait(0.03)
+        end
+        if durationFill and durationFill.Parent then
+            durationFill.Size = UDim2.new(0, 0, 1, 0)
+        end
+        if durationBg and durationBg.Parent then
+            durationBg.Visible = false
+        end
+        durationTask = nil
+    end)
+end
+
+local function stopDurationBar()
+    if durationTask then
+        pcall(function() task.cancel(durationTask) end)
+        durationTask = nil
+    end
+    if durationBg and durationBg.Parent then
+        durationBg.Visible = false
+        durationFill.Size = UDim2.new(1, 0, 1, 0)
+    end
+end
+
+--=============================================================
 -- ✨ TOGGLE CHAR
 --=============================================================
 local function toggleCharPerm()
@@ -692,10 +913,21 @@ local function toggleCharPerm()
     if morphEnabled then
         task.spawn(function()
             local ok = tryMorph()
-            if not ok then warn("[Sandevistan] Morph falhou ao ativar CHAR.") end
+            if ok then
+                showToast("👤 CHAR PERM ATIVADO", COR_LAVANDA)
+            else
+                showToast("⚠ FALHA AO APLICAR CHAR", COR_VERMELHO)
+            end
         end)
     else
-        task.spawn(revertMorph)
+        task.spawn(function()
+            local ok = revertMorph()
+            if ok then
+                showToast("👤 CHAR RESTAURADO (" .. player.Name .. ")", COR_CIANO)
+            else
+                showToast("⚠ FALHA AO RESTAURAR CHAR", COR_VERMELHO)
+            end
+        end)
     end
     atualizarBotaoUI()
 end
@@ -1155,7 +1387,6 @@ local function activateLagSwitch()
         seat.AssemblyLinearVelocity = Vector3.zero
     end)
 
-    -- Watchdog: força cleanup se por algum motivo deactivate não rodar
     if lagSwitchWatchdog then
         pcall(function() task.cancel(lagSwitchWatchdog) end)
     end
@@ -1226,7 +1457,7 @@ activate = function()
 
         setVisuals(true)
 
-        if soundReady then
+        if soundLoaded then
             pcall(function() sound:Play() end)
         end
 
@@ -1239,6 +1470,7 @@ activate = function()
         end)
 
         startCloneSpawning()
+        startDurationBar()
         atualizarBotaoUI()
 
         deactivateToken = deactivateToken + 1
@@ -1263,6 +1495,7 @@ activate = function()
         pcall(function() cleanupClones() end)
         pcall(function() removeMainParticles() end)
         pcall(function() deactivateLagSwitch() end)
+        pcall(stopDurationBar)
         setVisuals(false)
         if humanoid and humanoid.Parent then
             pcall(function() humanoid.WalkSpeed = NORMAL_SPEED end)
@@ -1288,6 +1521,7 @@ deactivate = function()
         end)
 
         stopCloneSpawning()
+        stopDurationBar()
         task.wait(CLONE_INTERVAL * 1.5)
 
         pcall(cleanupClones)
@@ -1313,6 +1547,7 @@ deactivate = function()
     if not ok then
         warn("[Sandevistan] deactivate falhou: " .. tostring(err))
         pcall(function() stopCloneSpawning() end)
+        pcall(stopDurationBar)
         pcall(function() cleanupClones() end)
         pcall(function() removeMainParticles() end)
         pcall(function() deactivateLagSwitch() end)
@@ -1379,7 +1614,7 @@ local function bindCharacter(char)
 
     if not normalSpeedCaptured and humanoid then
         normalSpeedCaptured = true
-        NORMAL_SPEED = math.max(humanoid.WalkSpeed, 16)   -- fix WalkSpeed 0
+        NORMAL_SPEED = math.max(humanoid.WalkSpeed, 16)
     end
 
     if isActive then
@@ -1399,6 +1634,7 @@ local function bindCharacter(char)
             if hum2 and hum2.Parent then
                 pcall(function() hum2.WalkSpeed = BOOSTED_SPEED end)
             end
+            removeMainParticles()
             captureOriginalArchivable()
             pcall(function() char.Archivable = true end)
             attachMainParticles()
@@ -1406,7 +1642,7 @@ local function bindCharacter(char)
         end)
     end
 
-    -- MORPH: só se morphEnabled estiver ON
+    -- Reaplica morph somente se toggle CHAR estiver ON
     if morphEnabled then
         task.spawn(function()
             task.wait(0.5)
@@ -1482,6 +1718,16 @@ local function fullCleanup()
     pcall(deactivateLagSwitch)
     removeMainParticles()
 
+    if durationTask then
+        pcall(function() task.cancel(durationTask) end)
+        durationTask = nil
+    end
+
+    if toastTask then
+        pcall(function() task.cancel(toastTask) end)
+        toastTask = nil
+    end
+
     if currentShakeConnection then
         pcall(function() currentShakeConnection:Disconnect() end)
         currentShakeConnection = nil
@@ -1489,6 +1735,9 @@ local function fullCleanup()
 
     if flashGui and flashGui.Parent then pcall(function() flashGui:Destroy() end) end
     flashGui = nil
+
+    if toastGui and toastGui.Parent then pcall(function() toastGui:Destroy() end) end
+    toastGui = nil
 
     if screenGui and screenGui.Parent then pcall(function() screenGui:Destroy() end) end
     if colorCorrection and colorCorrection.Parent then pcall(function() colorCorrection:Destroy() end) end
@@ -1513,7 +1762,7 @@ end
 --=============================================================
 -- ✨ BOOT
 --=============================================================
-print("✨ SANDEVISTAN v4.6 — EDGERUNNERS EDITION")
+print("✨ SANDEVISTAN v4.9 — EDGERUNNERS EDITION")
 print("[Sandevistan] F ou clique: liga/desliga")
 print("[Sandevistan] Duração: 3.5s | Velocidade: 60")
 print("[Sandevistan] CHAR PERM: toggle no menu (default OFF)")
