@@ -1,7 +1,10 @@
 --=============================================================
 -- SANDEVISTAN v4.9 — EDGERUNNERS EDITION
--- Velocidade: 35 | Duração: 3.5s | Tecla: F | Char: toggle
--- Clones: NÃO spawnam enquanto o jogador está parado
+-- Velocidade: 30 | Duração: 3.5s | Tecla: F | Char: toggle
+-- Áudio 1 (swoosh): 97013920026153 | speed 1 | vol 0.35 | end 0.7
+-- Áudio 2 (main):   130840290979991 | speed 0.75 | vol 1.55 | start 1.9
+-- Sequência: swoosh (0.7s) -> espera -> main começa em 1.9s + Sandevistan ativa
+-- Clones: só spawnam em movimento
 --=============================================================
 
 --=============================================================
@@ -92,7 +95,7 @@ do
 
     killChildren(GUI_PARENT,  { "SandevistanGUI", "SandevistanFlashGui", "SandevistanBlackFlash", "SandevistanToast" })
     killChildren(WS,          { "SandevistanSound", "invischair" })
-    killChildren(SoundService,{ "SandevistanSound" })
+    killChildren(SoundService,{ "SandevistanSound", "SandevistanSwoosh" })
     killChildren(Lighting,    { "SandevistanEffect", "SandevistanBloom", "SandevistanBlur" })
 
     for _, obj in ipairs(WS:GetChildren()) do
@@ -107,7 +110,7 @@ end
 --=============================================================
 local TOGGLE_KEY            = Enum.KeyCode.F
 local NORMAL_SPEED          = 16
-local BOOSTED_SPEED         = 35          -- <-- mudado para 35
+local BOOSTED_SPEED         = 27
 local SANDEVISTAN_DURATION  = 3.5
 local CLONE_INTERVAL        = 0.05
 local MAX_CLONES            = 70
@@ -116,6 +119,17 @@ local MORPH_USERNAME        = "ZiemekaTheSequel"
 
 -- Velocidade mínima para o clone spawnar (studs/s)
 local MOVE_THRESHOLD        = 2
+
+-- Configs dos áudios
+local AUDIO_SWOOSH_ID       = "rbxassetid://97013920026153"
+local AUDIO_SWOOSH_SPEED    = 1
+local AUDIO_SWOOSH_VOLUME   = 0.15   -- <-- diminuído (era 0.7)
+local AUDIO_SWOOSH_END      = 0.7    -- corta em 0.7s
+
+local AUDIO_MAIN_ID         = "rbxassetid://130840290979991"
+local AUDIO_MAIN_SPEED      = 0.5   -- <-- diminuído (era 1)
+local AUDIO_MAIN_VOLUME     = 1
+local AUDIO_MAIN_START      = 1.9    -- começa em 1.9s da track
 
 --=============================================================
 -- ⚡ STATE
@@ -149,6 +163,7 @@ local lastToggleTime        = -math.huge
 local originalArchivable    = nil
 local archivableCaptured    = false
 local archivableChar        = nil
+local pendingActivation     = false
 
 --=============================================================
 -- 🎨 PALETA
@@ -174,27 +189,34 @@ bloomEffect.Threshold = 1.5
 bloomEffect.Parent = Lighting
 
 --=============================================================
--- 🔊 SOM
+-- 🔊 SONS
 --=============================================================
+local swoosh = Instance.new("Sound")
+swoosh.Name = "SandevistanSwoosh"
+swoosh.SoundId = AUDIO_SWOOSH_ID
+swoosh.Volume = AUDIO_SWOOSH_VOLUME
+swoosh.PlaybackSpeed = AUDIO_SWOOSH_SPEED
+swoosh.Looped = false
+swoosh.Parent = SoundService
+
 local sound = Instance.new("Sound")
 sound.Name = "SandevistanSound"
-sound.SoundId = "rbxassetid://130840290979991"
-sound.Volume = 1
+sound.SoundId = AUDIO_MAIN_ID
+sound.Volume = AUDIO_MAIN_VOLUME
+sound.PlaybackSpeed = AUDIO_MAIN_SPEED
 sound.Looped = false
 sound.Parent = SoundService
 
 task.spawn(function()
     local ok = pcall(function()
-        ContentProvider:PreloadAsync({ sound })
+        ContentProvider:PreloadAsync({ swoosh, sound })
     end)
     soundReady = ok
 
     if not sound.IsLoaded then
         local loaded = false
         local conn
-        conn = sound.Loaded:Connect(function()
-            loaded = true
-        end)
+        conn = sound.Loaded:Connect(function() loaded = true end)
         local start = os.clock()
         while not loaded and (os.clock() - start) < 2 do
             task.wait(0.05)
@@ -210,9 +232,8 @@ task.spawn(function()
 end)
 
 --=============================================================
--- 🎨 PALETA EDGERUNNERS (tons pastelados do anime)
+-- 🎨 PALETA EDGERUNNERS
 --=============================================================
--- Ordem: do clone mais ANTIGO (longe) -> clone mais NOVO (perto do corpo)
 local PALETA_EDGERUNNERS = {
     Color3.fromRGB(160, 230, 240),   -- 1. Ciano claro pastel
     Color3.fromRGB(100, 180, 235),   -- 2. Azul claro
@@ -237,7 +258,6 @@ local function getGradientColor(t)
     return PALETA_EDGERUNNERS[i]:Lerp(PALETA_EDGERUNNERS[i + 1], frac)
 end
 
--- Mundo verde-neon forte (como no anime)
 local effectColors = {
     Active   = {
         Contrast = 0.55,
@@ -279,7 +299,6 @@ local function waitTween(tween, timeout)
     if conn then pcall(function() conn:Disconnect() end) end
 end
 
--- Retorna true se o personagem está se movendo (ignora queda vertical)
 local function isCharacterMoving()
     if not character or not character.Parent then return false end
     local hrp = character:FindFirstChild("HumanoidRootPart")
@@ -287,6 +306,39 @@ local function isCharacterMoving()
     local vel = hrp.AssemblyLinearVelocity
     local planarSpeed = math.sqrt(vel.X * vel.X + vel.Z * vel.Z)
     return planarSpeed >= MOVE_THRESHOLD
+end
+
+--=============================================================
+-- 🔊 SEQUÊNCIA DE ÁUDIOS
+--=============================================================
+local function playIntroAudioSequence()
+    -- FASE 1: swoosh (corta em 0.7s)
+    if swoosh and swoosh.Parent then
+        pcall(function()
+            swoosh.TimePosition = 0
+            swoosh:Play()
+        end)
+
+        local startT = os.clock()
+        while (os.clock() - startT) < AUDIO_SWOOSH_END do
+            if not running then break end
+            task.wait(0.02)
+        end
+
+        pcall(function() swoosh:Stop() end)
+    else
+        task.wait(AUDIO_SWOOSH_END)
+    end
+
+    -- FASE 2: main a partir de 1.9s
+    if sound and sound.Parent then
+        pcall(function()
+            sound.TimePosition = AUDIO_MAIN_START
+            sound:Play()
+        end)
+    end
+
+    return true
 end
 
 --=============================================================
@@ -860,6 +912,16 @@ local function atualizarBotaoUI()
             toggleAccent.BackgroundColor3 = COR_CIANO
             liveDot.BackgroundColor3 = COR_VERDE
             liveDotStroke.Color = COR_CIANO
+        elseif pendingActivation then
+            toggleLbl.Text = "🔊 CARREGANDO..."
+            toggleLbl.TextColor3 = COR_AMARELO
+            toggleBtn.BackgroundColor3 = COR_AMARELO
+            toggleBtn.BackgroundTransparency = 0.2
+            toggleStroke.Color = COR_AMARELO
+            toggleStroke.Transparency = 0.2
+            toggleAccent.BackgroundColor3 = COR_AMARELO
+            liveDot.BackgroundColor3 = COR_AMARELO
+            liveDotStroke.Color = COR_CIANO
         else
             toggleLbl.Text = "⚡ SANDEVISTAN [OFF]"
             toggleLbl.TextColor3 = COR_CIANO
@@ -880,7 +942,8 @@ local function atualizarBotaoUI()
             charBtn.BackgroundColor3 = COR_LAVANDA
             charBtn.BackgroundTransparency = 0
             charStroke.Color = COR_CIANO
-            charStroke.Transparency = 0.1            charAccent.BackgroundColor3 = COR_VERDE
+            charStroke.Transparency = 0.1
+            charAccent.BackgroundColor3 = COR_VERDE
             charDot.BackgroundColor3 = COR_VERDE
             charDotStroke.Color = COR_CIANO
         else
@@ -971,7 +1034,7 @@ end
 -- ✨ HOVER
 --=============================================================
 table.insert(connections, toggleBtn.MouseEnter:Connect(function()
-    if not isActive then
+    if not isActive and not pendingActivation then
         pcall(function()
             TweenService:Create(hoverScale, TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1.05}):Play()
         end)
@@ -982,7 +1045,7 @@ table.insert(connections, toggleBtn.MouseEnter:Connect(function()
 end))
 
 table.insert(connections, toggleBtn.MouseLeave:Connect(function()
-    if not isActive then
+    if not isActive and not pendingActivation then
         pcall(function()
             TweenService:Create(hoverScale, TweenInfo.new(0.15, Enum.EasingStyle.Quad), {Scale = 1}):Play()
         end)
@@ -1206,7 +1269,7 @@ local function createClone()
     if not character or not character.Parent then return end
     if not character:FindFirstChild("HumanoidRootPart") then return end
     if #activeClones >= MAX_CLONES then return end
-    if not isCharacterMoving() then return end   -- <-- só spawna se estiver se movendo
+    if not isCharacterMoving() then return end
 
     local root = character:FindFirstChild("HumanoidRootPart")
     if not root then return end
@@ -1229,7 +1292,6 @@ local function createClone()
     local humanoidClone = clone:FindFirstChildOfClass("Humanoid")
     if humanoidClone then humanoidClone:Destroy() end
 
-    -- Cor deste clone no gradiente contínuo
     cloneColorIndex = cloneColorIndex + 1
     local step = (cloneColorIndex - 1) % MAX_CLONES
     local t = step / (MAX_CLONES - 1)
@@ -1451,7 +1513,7 @@ local activate, deactivate
 
 activate = function()
     if not running then return false end
-    if isActive or isDeactivating then return false end
+    if isActive or isDeactivating or pendingActivation then return false end
     if not character or not character.Parent then
         warn("[Sandevistan] Personagem não disponível.")
         return false
@@ -1461,6 +1523,19 @@ activate = function()
         return false
     end
 
+    pendingActivation = true
+    atualizarBotaoUI()
+
+    local myToken = deactivateToken
+    playIntroAudioSequence()
+
+    if not running or myToken ~= deactivateToken then
+        pendingActivation = false
+        atualizarBotaoUI()
+        return false
+    end
+
+    pendingActivation = false
     isActive = true
     cloneColorIndex = 0
     captureOriginalArchivable()
@@ -1470,10 +1545,6 @@ activate = function()
         pcall(function() humanoid.WalkSpeed = BOOSTED_SPEED end)
 
         setVisuals(true)
-
-        if soundLoaded then
-            pcall(function() sound:Play() end)
-        end
 
         activateLagSwitch()
         attachMainParticles()
@@ -1488,9 +1559,9 @@ activate = function()
         atualizarBotaoUI()
 
         deactivateToken = deactivateToken + 1
-        local myToken = deactivateToken
+        local myDelayToken = deactivateToken
         task.delay(SANDEVISTAN_DURATION, function()
-            if myToken ~= deactivateToken then return end
+            if myDelayToken ~= deactivateToken then return end
             if not isActive then return end
             local ok2, err2 = pcall(deactivate)
             if not ok2 then
@@ -1553,6 +1624,9 @@ deactivate = function()
         if sound then
             pcall(function() sound:Stop() end)
         end
+        if swoosh then
+            pcall(function() swoosh:Stop() end)
+        end
 
         task.spawn(function() cameraShake(0.2, 0.15) end)
         atualizarBotaoUI()
@@ -1581,7 +1655,7 @@ end
 --=============================================================
 local function toggleSandevistan()
     if not running then return end
-    if isDeactivating then return end
+    if isDeactivating or pendingActivation then return end
     local now = os.clock()
     if now - lastToggleTime < TOGGLE_COOLDOWN then return end
 
@@ -1711,6 +1785,7 @@ end)
 local function fullCleanup()
     running = false
     deactivateToken = deactivateToken + 1
+    pendingActivation = false
 
     if humanoid and humanoid.Parent then
         pcall(function() humanoid.WalkSpeed = NORMAL_SPEED end)
@@ -1756,6 +1831,7 @@ local function fullCleanup()
     if colorCorrection and colorCorrection.Parent then pcall(function() colorCorrection:Destroy() end) end
     if bloomEffect and bloomEffect.Parent then pcall(function() bloomEffect:Destroy() end) end
     if sound and sound.Parent then pcall(function() sound:Destroy() end) end
+    if swoosh and swoosh.Parent then pcall(function() swoosh:Destroy() end) end
 
     restoreArchivable()
 
@@ -1777,6 +1853,6 @@ end
 --=============================================================
 print("✨ SANDEVISTAN v4.9 — EDGERUNNERS EDITION")
 print("[Sandevistan] F ou clique: liga/desliga")
-print("[Sandevistan] Duração: 3.5s | Velocidade: 35")
+print("[Sandevistan] Duração: 3.5s | Velocidade: 30")
+print("[Sandevistan] Áudio: swoosh (vol 0.35, 0.7s) -> main (speed 0.75, em 1.9s)")
 print("[Sandevistan] Clones: só spawnam em movimento")
-print("[Sandevistan] CHAR PERM: toggle no menu (default OFF)")
