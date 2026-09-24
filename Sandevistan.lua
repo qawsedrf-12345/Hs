@@ -1,7 +1,7 @@
 --=============================================================
 -- SANDEVISTAN v4.9 — EDGERUNNERS EDITION
--- Velocidade: 60 | Duração: 3.5s | Tecla: F | Char: toggle
--- Revert: usa o próprio Nick/UserId do jogador via morph pipeline
+-- Velocidade: 35 | Duração: 3.5s | Tecla: F | Char: toggle
+-- Clones: NÃO spawnam enquanto o jogador está parado
 --=============================================================
 
 --=============================================================
@@ -107,12 +107,15 @@ end
 --=============================================================
 local TOGGLE_KEY            = Enum.KeyCode.F
 local NORMAL_SPEED          = 16
-local BOOSTED_SPEED         = 100
+local BOOSTED_SPEED         = 35          -- <-- mudado para 35
 local SANDEVISTAN_DURATION  = 3.5
-local CLONE_INTERVAL        = 0.14
-local MAX_CLONES            = 25
+local CLONE_INTERVAL        = 0.05
+local MAX_CLONES            = 70
 local TOGGLE_COOLDOWN       = 0.3
 local MORPH_USERNAME        = "ZiemekaTheSequel"
+
+-- Velocidade mínima para o clone spawnar (studs/s)
+local MOVE_THRESHOLD        = 2
 
 --=============================================================
 -- ⚡ STATE
@@ -138,6 +141,7 @@ local cloneTask             = nil
 local activeSeat            = nil
 local activeWeld            = nil
 local activeClones          = {}
+local cloneColorIndex       = 0
 local connections           = {}
 local morphUserId           = nil
 local running               = true
@@ -206,13 +210,47 @@ task.spawn(function()
 end)
 
 --=============================================================
--- 🎨 SEQUÊNCIAS
+-- 🎨 PALETA EDGERUNNERS (tons pastelados do anime)
 --=============================================================
-local colorSequence = { COR_CIANO, COR_VERDE, COR_LAVANDA }
+-- Ordem: do clone mais ANTIGO (longe) -> clone mais NOVO (perto do corpo)
+local PALETA_EDGERUNNERS = {
+    Color3.fromRGB(160, 230, 240),   -- 1. Ciano claro pastel
+    Color3.fromRGB(100, 180, 235),   -- 2. Azul claro
+    Color3.fromRGB(110, 140, 220),   -- 3. Azul/roxo
+    Color3.fromRGB(160, 120, 210),   -- 4. Roxo/lilás
+    Color3.fromRGB(200, 110, 170),   -- 5. Magenta suave
+    Color3.fromRGB(220, 100, 110),   -- 6. Vermelho pastel
+    Color3.fromRGB(230, 160, 90),    -- 7. Laranja quente
+    Color3.fromRGB(230, 210, 120),   -- 8. Amarelo quente
+}
 
+local function getGradientColor(t)
+    t = math.clamp(t, 0, 1)
+    local n = #PALETA_EDGERUNNERS
+    if n == 1 then return PALETA_EDGERUNNERS[1] end
+
+    local scaled = t * (n - 1)
+    local i = math.floor(scaled) + 1
+    local frac = scaled - (i - 1)
+
+    if i >= n then return PALETA_EDGERUNNERS[n] end
+    return PALETA_EDGERUNNERS[i]:Lerp(PALETA_EDGERUNNERS[i + 1], frac)
+end
+
+-- Mundo verde-neon forte (como no anime)
 local effectColors = {
-    Active   = { Contrast = 0.5, Saturation = 0.25, TintColor = Color3.fromRGB(85, 255, 127) },
-    Inactive = { Contrast = 0,   Saturation = 0,    TintColor = Color3.new(1, 1, 1) }
+    Active   = {
+        Contrast = 0.55,
+        Saturation = 0.4,
+        Brightness = 0.03,
+        TintColor = Color3.fromRGB(80, 240, 120)
+    },
+    Inactive = {
+        Contrast = 0,
+        Saturation = 0,
+        Brightness = 0,
+        TintColor = Color3.new(1, 1, 1)
+    }
 }
 
 --=============================================================
@@ -241,10 +279,19 @@ local function waitTween(tween, timeout)
     if conn then pcall(function() conn:Disconnect() end) end
 end
 
+-- Retorna true se o personagem está se movendo (ignora queda vertical)
+local function isCharacterMoving()
+    if not character or not character.Parent then return false end
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    local vel = hrp.AssemblyLinearVelocity
+    local planarSpeed = math.sqrt(vel.X * vel.X + vel.Z * vel.Z)
+    return planarSpeed >= MOVE_THRESHOLD
+end
+
 --=============================================================
--- ✨ MORPH — pipeline genérico (usado tanto pro morph quanto pro revert)
+-- ✨ MORPH
 --=============================================================
--- targetUserId: ID do usuário-alvo (pode ser o do morfista OU o do jogador)
 local function morphIntoUser(targetUserId)
     local char = player.Character
     local hum  = char and char:FindFirstChildOfClass("Humanoid")
@@ -335,7 +382,6 @@ local function morphIntoUser(targetUserId)
     return okFinal
 end
 
--- Morph para o usuário configurado (ZiemekaTheSequel)
 local function tryMorph()
     if isMorphing then return false end
     isMorphing = true
@@ -362,15 +408,8 @@ local function tryMorph()
     return result and true or false
 end
 
---=============================================================
--- ✨ REVERT — volta pro char do próprio jogador
---=============================================================
--- Pega o NICK do jogador (player.Name) e resolve o ID via API.
--- Depois usa o MESMO pipeline do morph — sem ApplyDescription,
--- sem ApplyDescriptionReset, sem cache de cliente.
 local function revertMorph()
     if isMorphing then
-        -- Espera o morph em progresso terminar (com timeout curto)
         local start = os.clock()
         while isMorphing and (os.clock() - start) < 1 do
             task.wait(0.05)
@@ -380,14 +419,12 @@ local function revertMorph()
     isMorphing = true
 
     local ok, result = pcall(function()
-        -- 1) Pega o nick do próprio jogador
         local myName = player.Name
         if not myName or myName == "" then
             warn("[Sandevistan] Não foi possível obter o nick do jogador.")
             return false
         end
 
-        -- 2) Resolve o ID do nick
         local okId, myId = pcall(function()
             return Players:GetUserIdFromNameAsync(myName)
         end)
@@ -396,7 +433,6 @@ local function revertMorph()
             return false
         end
 
-        -- 3) Aplica o char do próprio jogador via pipeline padrão
         return morphIntoUser(myId)
     end)
 
@@ -844,8 +880,7 @@ local function atualizarBotaoUI()
             charBtn.BackgroundColor3 = COR_LAVANDA
             charBtn.BackgroundTransparency = 0
             charStroke.Color = COR_CIANO
-            charStroke.Transparency = 0.1
-            charAccent.BackgroundColor3 = COR_VERDE
+            charStroke.Transparency = 0.1            charAccent.BackgroundColor3 = COR_VERDE
             charDot.BackgroundColor3 = COR_VERDE
             charDotStroke.Color = COR_CIANO
         else
@@ -1164,13 +1199,14 @@ local function cameraShake(duration, magnitude)
 end
 
 --=============================================================
--- ✨ CLONES
+-- ✨ CLONES (gradiente pastelado + só em movimento)
 --=============================================================
 local function createClone()
     if not isActive then return end
     if not character or not character.Parent then return end
     if not character:FindFirstChild("HumanoidRootPart") then return end
     if #activeClones >= MAX_CLONES then return end
+    if not isCharacterMoving() then return end   -- <-- só spawna se estiver se movendo
 
     local root = character:FindFirstChild("HumanoidRootPart")
     if not root then return end
@@ -1193,7 +1229,11 @@ local function createClone()
     local humanoidClone = clone:FindFirstChildOfClass("Humanoid")
     if humanoidClone then humanoidClone:Destroy() end
 
-    local corInicial = colorSequence[1]
+    -- Cor deste clone no gradiente contínuo
+    cloneColorIndex = cloneColorIndex + 1
+    local step = (cloneColorIndex - 1) % MAX_CLONES
+    local t = step / (MAX_CLONES - 1)
+    local corDoClone = getGradientColor(t)
 
     for _, obj in ipairs(clone:GetDescendants()) do
         if obj:IsA("BasePart") then
@@ -1201,7 +1241,7 @@ local function createClone()
             obj.CanCollide = false
             obj.Material = Enum.Material.Neon
             obj.Transparency = 0
-            obj.Color = corInicial
+            obj.Color = corDoClone
             obj.Reflectance = 0
         elseif obj:IsA("Decal") then
             obj.Transparency = 1
@@ -1210,7 +1250,7 @@ local function createClone()
         elseif obj:IsA("Accessory") then
             for _, part in ipairs(obj:GetDescendants()) do
                 if part:IsA("BasePart") then
-                    part.Color = corInicial
+                    part.Color = corDoClone
                     part.Transparency = 0
                     part.Material = Enum.Material.Neon
                 elseif part:IsA("Decal") then
@@ -1221,8 +1261,8 @@ local function createClone()
     end
 
     local highlight = Instance.new("Highlight")
-    highlight.FillColor = corInicial
-    highlight.OutlineColor = corInicial
+    highlight.FillColor = corDoClone
+    highlight.OutlineColor = corDoClone
     highlight.FillTransparency = 0.0
     highlight.OutlineTransparency = 0.2
     highlight.DepthMode = Enum.HighlightDepthMode.Occluded
@@ -1231,7 +1271,7 @@ local function createClone()
     if cloneRoot then
         local trailParticle = Instance.new("ParticleEmitter")
         trailParticle.Name = "CloneTrail"
-        trailParticle.Color = ColorSequence.new(COR_CIANO)
+        trailParticle.Color = ColorSequence.new(corDoClone)
         trailParticle.Texture = "rbxasset://textures/particles/sparkles_main.dds"
         trailParticle.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 0.8), NumberSequenceKeypoint.new(1, 0)})
         trailParticle.Lifetime = NumberRange.new(0.5, 1)
@@ -1240,33 +1280,6 @@ local function createClone()
         trailParticle.SpreadAngle = Vector2.new(360, 360)
         trailParticle.Parent = cloneRoot
     end
-
-    local index = 0
-    local duration = SANDEVISTAN_DURATION / #colorSequence
-
-    task.spawn(function()
-        while clone and clone.Parent and isActive do
-            index = index % #colorSequence + 1
-            local novaCor = colorSequence[index]
-
-            local okTween = pcall(function()
-                TweenService:Create(highlight, TweenInfo.new(duration), {
-                    FillColor = novaCor,
-                    OutlineColor = novaCor
-                }):Play()
-            end)
-            if not okTween then break end
-
-            task.wait(duration)
-            if not (clone and clone.Parent and isActive) then break end
-
-            for _, obj in ipairs(clone:GetDescendants()) do
-                if obj:IsA("BasePart") then
-                    obj.Color = novaCor
-                end
-            end
-        end
-    end)
 
     table.insert(activeClones, { clone = clone, highlight = highlight })
 end
@@ -1449,6 +1462,7 @@ activate = function()
     end
 
     isActive = true
+    cloneColorIndex = 0
     captureOriginalArchivable()
 
     local ok, err = xpcall(function()
@@ -1642,7 +1656,6 @@ local function bindCharacter(char)
         end)
     end
 
-    -- Reaplica morph somente se toggle CHAR estiver ON
     if morphEnabled then
         task.spawn(function()
             task.wait(0.5)
@@ -1764,5 +1777,6 @@ end
 --=============================================================
 print("✨ SANDEVISTAN v4.9 — EDGERUNNERS EDITION")
 print("[Sandevistan] F ou clique: liga/desliga")
-print("[Sandevistan] Duração: 3.5s | Velocidade: 60")
+print("[Sandevistan] Duração: 3.5s | Velocidade: 35")
+print("[Sandevistan] Clones: só spawnam em movimento")
 print("[Sandevistan] CHAR PERM: toggle no menu (default OFF)")
