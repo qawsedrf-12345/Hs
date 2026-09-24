@@ -1,7 +1,7 @@
 --=============================================================
--- SANDEVISTAN v4.1 — EDGERUNNERS EDITION
--- Fixes: archivable preservation, task.delay token pattern,
---        flash DisplayOrder, char/humanoid sync window.
+-- SANDEVISTAN v4.6 — EDGERUNNERS EDITION
+-- Velocidade: 60 | Duração: 3.5s | Tecla: F | Char: toggle
+-- Fixes: lag switch watchdog, WalkSpeed 0, morph toggle
 --=============================================================
 
 --=============================================================
@@ -14,7 +14,6 @@ local RunService        = game:GetService("RunService")
 local UserInputService  = game:GetService("UserInputService")
 local CoreGui           = game:GetService("CoreGui")
 local SoundService      = game:GetService("SoundService")
-local TeleportService   = game:GetService("TeleportService")
 local ContentProvider   = game:GetService("ContentProvider")
 local WS                = game:GetService("Workspace")
 
@@ -108,7 +107,7 @@ end
 --=============================================================
 local TOGGLE_KEY            = Enum.KeyCode.F
 local NORMAL_SPEED          = 16
-local BOOSTED_SPEED         = 105
+local BOOSTED_SPEED         = 60
 local SANDEVISTAN_DURATION  = 3.5
 local CLONE_INTERVAL        = 0.14
 local MAX_CLONES            = 25
@@ -124,6 +123,8 @@ local isMorphing            = false
 local glitchPulseRunning    = false
 local normalSpeedCaptured   = false
 local soundReady            = false
+local morphEnabled          = false          -- toggle CHAR (default OFF)
+local lagSwitchWatchdog     = nil
 local flashGui              = nil
 local currentShakeConnection= nil
 local deactivateToken       = 0
@@ -136,10 +137,10 @@ local activeClones          = {}
 local connections           = {}
 local morphUserId           = nil
 local running               = true
-local rejoining             = false
 local lastToggleTime        = -math.huge
 local originalArchivable    = nil
 local archivableCaptured    = false
+local archivableChar        = nil
 
 --=============================================================
 -- 🎨 PALETA
@@ -338,8 +339,24 @@ local function tryMorph()
     return result and true or false
 end
 
+local function revertMorph()
+    -- Remove tudo que o morph adicionou, restaurando o char original
+    local ok, err = pcall(function()
+        local char = player.Character
+        if not char or not char.Parent then return end
+        -- Pede ao Roblox para reconstruir o avatar do jogador
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            pcall(function() hum:ApplyDescriptionReset() end)
+        end
+    end)
+    if not ok then
+        warn("[Sandevistan] revertMorph erro: " .. tostring(err))
+    end
+end
+
 --=============================================================
--- 🖥️ UI
+-- 🖥️ UI COMPACTA (120×82, 3 elementos)
 --=============================================================
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "SandevistanGUI"
@@ -367,11 +384,12 @@ overlayStroke.Parent = glitchOverlay
 
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 120, 0, 140)
-mainFrame.Position = UDim2.new(0, 20, 0.35, -70)
+mainFrame.Size = UDim2.new(0, 120, 0, 82)
+mainFrame.Position = UDim2.new(0, 20, 0.35, -41)
 mainFrame.BackgroundColor3 = COR_CIANO
 mainFrame.BackgroundTransparency = 0.15
 mainFrame.BorderSizePixel = 0
+mainFrame.ZIndex = 0
 mainFrame.Parent = screenGui
 
 local mainCorner = Instance.new("UICorner")
@@ -394,17 +412,17 @@ mainStroke.Transparency = 0.1
 mainStroke.Parent = mainFrame
 
 --=============================================================
--- 🎯 DRAG CUSTOM
+-- 🎯 DRAG
 --=============================================================
 do
     local dragArea = Instance.new("TextButton")
     dragArea.Name = "DragArea"
-    dragArea.Size = UDim2.new(1, 0, 0, 20)
+    dragArea.Size = UDim2.new(1, 0, 1, 0)
     dragArea.Position = UDim2.new(0, 0, 0, 0)
     dragArea.BackgroundTransparency = 1
     dragArea.Text = ""
     dragArea.AutoButtonColor = false
-    dragArea.ZIndex = 20
+    dragArea.ZIndex = 1
     dragArea.Parent = mainFrame
 
     local dragging = false
@@ -480,79 +498,97 @@ fazerCanto(UDim.new(1, 0), UDim.new(0, 0), -10, 0)
 fazerCanto(UDim.new(0, 0), UDim.new(1, 0), 0, -10)
 fazerCanto(UDim.new(1, 0), UDim.new(1, 0), -10, -10)
 
-local innerScreen = Instance.new("Frame")
-innerScreen.Size = UDim2.new(1, -8, 1, -8)
-innerScreen.Position = UDim2.new(0, 4, 0, 4)
-innerScreen.BackgroundColor3 = COR_VERDE
-innerScreen.BackgroundTransparency = 0.75
-innerScreen.BorderSizePixel = 0
-innerScreen.ClipsDescendants = true
-innerScreen.Parent = mainFrame
+--=============================================================
+-- ✨ HELPER: criar linha de botão
+--=============================================================
+local function makeLine(yPos, width, accentColor)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0.9, 0, 0, 24)
+    btn.Position = UDim2.new(0.05, 0, 0, yPos)
+    btn.BackgroundColor3 = COR_CIANO
+    btn.BackgroundTransparency = 0.2
+    btn.Text = ""
+    btn.AutoButtonColor = false
+    btn.BorderSizePixel = 0
+    btn.ZIndex = 2
+    btn.Parent = mainFrame
 
-local innerCorner = Instance.new("UICorner")
-innerCorner.CornerRadius = UDim.new(0, 3)
-innerCorner.Parent = innerScreen
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 4)
+    corner.Parent = btn
 
-local innerStroke = Instance.new("UIStroke")
-innerStroke.Color = COR_CIANO
-innerStroke.Thickness = 1
-innerStroke.Transparency = 0.2
-innerStroke.Parent = innerScreen
+    local grad = Instance.new("UIGradient")
+    grad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, COR_CIANO),
+        ColorSequenceKeypoint.new(0.5, COR_VERDE),
+        ColorSequenceKeypoint.new(1, COR_CIANO)
+    })
+    grad.Rotation = 90
+    grad.Parent = btn
 
-local statusBar = Instance.new("Frame")
-statusBar.Size = UDim2.new(1, 0, 0, 2)
-statusBar.BackgroundColor3 = COR_CIANO
-statusBar.BorderSizePixel = 0
-statusBar.ZIndex = 3
-statusBar.Parent = innerScreen
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = COR_CIANO
+    stroke.Thickness = 1
+    stroke.Transparency = 0.2
+    stroke.Parent = btn
 
-local statusGrad = Instance.new("UIGradient")
-statusGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, COR_CIANO),
-    ColorSequenceKeypoint.new(0.5, COR_VERDE),
-    ColorSequenceKeypoint.new(1, COR_CIANO)
-})
-statusGrad.Parent = statusBar
+    local accent = Instance.new("Frame")
+    accent.Name = "Accent"
+    accent.Size = UDim2.new(0, 3, 1, -6)
+    accent.Position = UDim2.new(0, 0, 0, 3)
+    accent.BackgroundColor3 = accentColor or COR_CIANO
+    accent.BorderSizePixel = 0
+    accent.ZIndex = 5
+    accent.Parent = btn
 
-local titleTag = Instance.new("TextLabel")
-titleTag.Size = UDim2.new(1, -10, 0, 8)
-titleTag.Position = UDim2.new(0, 5, 0, 5)
-titleTag.BackgroundTransparency = 1
-titleTag.Text = "▰ SANDEVISTAN OS"
-titleTag.TextColor3 = COR_CIANO
-titleTag.Font = Enum.Font.Code
-titleTag.TextSize = 6
-titleTag.TextXAlignment = Enum.TextXAlignment.Left
-titleTag.ZIndex = 4
-titleTag.Parent = innerScreen
+    local accentCorner = Instance.new("UICorner")
+    accentCorner.CornerRadius = UDim.new(1, 0)
+    accentCorner.Parent = accent
 
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -10, 0, 12)
-title.Position = UDim2.new(0, 5, 0, 13)
-title.BackgroundTransparency = 1
-title.Text = "CHROME SYSTEM"
-title.TextColor3 = COR_VERDE
-title.Font = Enum.Font.GothamBlack
-title.TextSize = 10
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.ZIndex = 4
-title.Parent = innerScreen
+    local lbl = Instance.new("TextLabel")
+    lbl.Name = "Label"
+    lbl.Size = UDim2.new(1, -20, 1, 0)
+    lbl.Position = UDim2.new(0, 12, 0, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = ""
+    lbl.TextColor3 = COR_CIANO
+    lbl.Font = Enum.Font.Code
+    lbl.TextSize = 8
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.ZIndex = 5
+    lbl.Parent = btn
 
-local titleGrad = Instance.new("UIGradient")
-titleGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, COR_CIANO),
-    ColorSequenceKeypoint.new(0.5, COR_VERDE),
-    ColorSequenceKeypoint.new(1, COR_CIANO)
-})
-titleGrad.Parent = title
+    local hoverScale = Instance.new("UIScale")
+    hoverScale.Scale = 1
+    hoverScale.Parent = btn
+
+    return {
+        btn = btn,
+        lbl = lbl,
+        stroke = stroke,
+        accent = accent,
+        hoverScale = hoverScale
+    }
+end
+
+--=============================================================
+-- ✨ LINHA 1: SANDEVISTAN [OFF/ON]
+--=============================================================
+local sdLine = makeLine(6, 0.9, COR_CIANO)
+local toggleBtn  = sdLine.btn
+local toggleLbl  = sdLine.lbl
+local toggleStroke = sdLine.stroke
+local toggleAccent = sdLine.accent
+local hoverScale = sdLine.hoverScale
 
 local liveDot = Instance.new("Frame")
-liveDot.Size = UDim2.new(0, 6, 0, 6)
-liveDot.Position = UDim2.new(1, -14, 0, 6)
+liveDot.Size = UDim2.new(0, 5, 0, 5)
+liveDot.Position = UDim2.new(1, -8, 0.5, 0)
+liveDot.AnchorPoint = Vector2.new(1, 0.5)
 liveDot.BackgroundColor3 = COR_CIANO
 liveDot.BorderSizePixel = 0
-liveDot.ZIndex = 4
-liveDot.Parent = innerScreen
+liveDot.ZIndex = 6
+liveDot.Parent = toggleBtn
 
 local liveDotCorner = Instance.new("UICorner")
 liveDotCorner.CornerRadius = UDim.new(1, 0)
@@ -564,199 +600,109 @@ liveDotStroke.Thickness = 1
 liveDotStroke.Transparency = 0.3
 liveDotStroke.Parent = liveDot
 
-task.spawn(function()
-    while running and liveDot and liveDot.Parent do
-        liveDot.BackgroundTransparency = 0
-        liveDotStroke.Transparency = 0.1
-        pcall(function()
-            TweenService:Create(liveDot, TweenInfo.new(0.3), {Size = UDim2.new(0, 8, 0, 8)}):Play()
-        end)
-        task.wait(0.8)
-        if not (running and liveDot and liveDot.Parent) then break end
-        liveDot.BackgroundTransparency = 0.7
-        liveDotStroke.Transparency = 0.8
-        pcall(function()
-            TweenService:Create(liveDot, TweenInfo.new(0.3), {Size = UDim2.new(0, 4, 0, 4)}):Play()
-        end)
-        task.wait(0.8)
+--=============================================================
+-- ✨ LINHA 2: CHAR PERM [OFF/ON]
+--=============================================================
+local chLine = makeLine(34, 0.9, COR_LAVANDA)
+local charBtn   = chLine.btn
+local charLbl   = chLine.lbl
+local charStroke = chLine.stroke
+local charAccent = chLine.accent
+local charHoverScale = chLine.hoverScale
+
+local charDot = Instance.new("Frame")
+charDot.Size = UDim2.new(0, 5, 0, 5)
+charDot.Position = UDim2.new(1, -8, 0.5, 0)
+charDot.AnchorPoint = Vector2.new(1, 0.5)
+charDot.BackgroundColor3 = COR_LAVANDA
+charDot.BorderSizePixel = 0
+charDot.ZIndex = 6
+charDot.Parent = charBtn
+
+local charDotCorner = Instance.new("UICorner")
+charDotCorner.CornerRadius = UDim.new(1, 0)
+charDotCorner.Parent = charDot
+
+local charDotStroke = Instance.new("UIStroke")
+charDotStroke.Color = COR_VERDE
+charDotStroke.Thickness = 1
+charDotStroke.Transparency = 0.3
+charDotStroke.Parent = charDot
+
+--=============================================================
+-- ✨ UI UPDATE (Sandevistan + Char)
+--=============================================================
+local function atualizarBotaoUI()
+    if not (screenGui and screenGui.Parent) then return end
+
+    if toggleLbl and toggleLbl.Parent then
+        if isActive then
+            toggleLbl.Text = "⚡ SANDEVISTAN [ON]"
+            toggleLbl.TextColor3 = COR_LAVANDA
+            toggleBtn.BackgroundColor3 = COR_VERDE
+            toggleBtn.BackgroundTransparency = 0
+            toggleStroke.Color = COR_CIANO
+            toggleStroke.Transparency = 0.1
+            toggleAccent.BackgroundColor3 = COR_CIANO
+            liveDot.BackgroundColor3 = COR_VERDE
+            liveDotStroke.Color = COR_CIANO
+        else
+            toggleLbl.Text = "⚡ SANDEVISTAN [OFF]"
+            toggleLbl.TextColor3 = COR_CIANO
+            toggleBtn.BackgroundColor3 = COR_CIANO
+            toggleBtn.BackgroundTransparency = 0.2
+            toggleStroke.Color = COR_CIANO
+            toggleStroke.Transparency = 0.2
+            toggleAccent.BackgroundColor3 = COR_CIANO
+            liveDot.BackgroundColor3 = COR_CIANO
+            liveDotStroke.Color = COR_VERDE
+        end
     end
-end)
 
-local toggleBtn = Instance.new("TextButton")
-toggleBtn.Name = "ToggleButton"
-toggleBtn.Size = UDim2.new(0.9, 0, 0, 24)
-toggleBtn.Position = UDim2.new(0.05, 0, 0, 32)
-toggleBtn.BackgroundColor3 = COR_CIANO
-toggleBtn.BackgroundTransparency = 0.2
-toggleBtn.Text = ""
-toggleBtn.AutoButtonColor = false
-toggleBtn.BorderSizePixel = 0
-toggleBtn.ZIndex = 4
-toggleBtn.Parent = innerScreen
-
-local toggleCorner = Instance.new("UICorner")
-toggleCorner.CornerRadius = UDim.new(0, 4)
-toggleCorner.Parent = toggleBtn
-
-local toggleGrad = Instance.new("UIGradient")
-toggleGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, COR_CIANO),
-    ColorSequenceKeypoint.new(0.5, COR_VERDE),
-    ColorSequenceKeypoint.new(1, COR_CIANO)
-})
-toggleGrad.Rotation = 90
-toggleGrad.Parent = toggleBtn
-
-local toggleStroke = Instance.new("UIStroke")
-toggleStroke.Color = COR_CIANO
-toggleStroke.Thickness = 1
-toggleStroke.Transparency = 0.2
-toggleStroke.Parent = toggleBtn
-
-local toggleAccent = Instance.new("Frame")
-toggleAccent.Name = "Accent"
-toggleAccent.Size = UDim2.new(0, 3, 1, -6)
-toggleAccent.Position = UDim2.new(0, 0, 0, 3)
-toggleAccent.BackgroundColor3 = COR_CIANO
-toggleAccent.BorderSizePixel = 0
-toggleAccent.ZIndex = 5
-toggleAccent.Parent = toggleBtn
-
-local toggleAccentCorner = Instance.new("UICorner")
-toggleAccentCorner.CornerRadius = UDim.new(1, 0)
-toggleAccentCorner.Parent = toggleAccent
-
-local toggleLbl = Instance.new("TextLabel")
-toggleLbl.Name = "Label"
-toggleLbl.Size = UDim2.new(1, -14, 1, 0)
-toggleLbl.Position = UDim2.new(0, 12, 0, 0)
-toggleLbl.BackgroundTransparency = 1
-toggleLbl.Text = "⚡ SANDEVISTAN [OFF]"
-toggleLbl.TextColor3 = COR_CIANO
-toggleLbl.Font = Enum.Font.Code
-toggleLbl.TextSize = 7
-toggleLbl.TextXAlignment = Enum.TextXAlignment.Left
-toggleLbl.ZIndex = 5
-toggleLbl.Parent = toggleBtn
-
-local rejoinBtn = Instance.new("TextButton")
-rejoinBtn.Name = "RejoinButton"
-rejoinBtn.Size = UDim2.new(0.9, 0, 0, 20)
-rejoinBtn.Position = UDim2.new(0.05, 0, 0, 60)
-rejoinBtn.BackgroundColor3 = COR_LAVANDA
-rejoinBtn.BackgroundTransparency = 0.2
-rejoinBtn.Text = ""
-rejoinBtn.AutoButtonColor = false
-rejoinBtn.BorderSizePixel = 0
-rejoinBtn.ZIndex = 4
-rejoinBtn.Parent = innerScreen
-
-local rejoinCorner = Instance.new("UICorner")
-rejoinCorner.CornerRadius = UDim.new(0, 4)
-rejoinCorner.Parent = rejoinBtn
-
-local rejoinGrad = Instance.new("UIGradient")
-rejoinGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, COR_LAVANDA),
-    ColorSequenceKeypoint.new(0.5, COR_CIANO),
-    ColorSequenceKeypoint.new(1, COR_LAVANDA)
-})
-rejoinGrad.Rotation = 90
-rejoinGrad.Parent = rejoinBtn
-
-local rejoinStroke = Instance.new("UIStroke")
-rejoinStroke.Color = COR_CIANO
-rejoinStroke.Thickness = 1
-rejoinStroke.Transparency = 0.2
-rejoinStroke.Parent = rejoinBtn
-
-local rejoinAccent = Instance.new("Frame")
-rejoinAccent.Name = "Accent"
-rejoinAccent.Size = UDim2.new(0, 3, 1, -6)
-rejoinAccent.Position = UDim2.new(0, 0, 0, 3)
-rejoinAccent.BackgroundColor3 = COR_VERDE
-rejoinAccent.BorderSizePixel = 0
-rejoinAccent.ZIndex = 5
-rejoinAccent.Parent = rejoinBtn
-
-local rejoinAccentCorner = Instance.new("UICorner")
-rejoinAccentCorner.CornerRadius = UDim.new(1, 0)
-rejoinAccentCorner.Parent = rejoinAccent
-
-local rejoinLbl = Instance.new("TextLabel")
-rejoinLbl.Name = "Label"
-rejoinLbl.Size = UDim2.new(1, -14, 1, 0)
-rejoinLbl.Position = UDim2.new(0, 12, 0, 0)
-rejoinLbl.BackgroundTransparency = 1
-rejoinLbl.Text = "🔁 REJOIN"
-rejoinLbl.TextColor3 = COR_CIANO
-rejoinLbl.Font = Enum.Font.Code
-rejoinLbl.TextSize = 7
-rejoinLbl.TextXAlignment = Enum.TextXAlignment.Left
-rejoinLbl.ZIndex = 5
-rejoinLbl.Parent = rejoinBtn
-
-local rejoinHoverScale = Instance.new("UIScale")
-rejoinHoverScale.Scale = 1
-rejoinHoverScale.Parent = rejoinBtn
-
-table.insert(connections, rejoinBtn.MouseEnter:Connect(function()
-    pcall(function()
-        TweenService:Create(rejoinHoverScale, TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1.05}):Play()
-    end)
-    rejoinBtn.BackgroundColor3 = COR_VERDE
-    rejoinStroke.Color = COR_CIANO
-    rejoinStroke.Transparency = 0.1
-    rejoinLbl.TextColor3 = COR_LAVANDA
-end))
-
-table.insert(connections, rejoinBtn.MouseLeave:Connect(function()
-    pcall(function()
-        TweenService:Create(rejoinHoverScale, TweenInfo.new(0.15, Enum.EasingStyle.Quad), {Scale = 1}):Play()
-    end)
-    rejoinBtn.BackgroundColor3 = COR_LAVANDA
-    rejoinBtn.BackgroundTransparency = 0.2
-    rejoinStroke.Color = COR_CIANO
-    rejoinStroke.Transparency = 0.2
-    rejoinLbl.TextColor3 = COR_CIANO
-end))
-
-table.insert(connections, rejoinBtn.MouseButton1Click:Connect(function()
-    if rejoining then return end
-    rejoining = true
-    rejoinLbl.Text = "🔁 REJOIN..."
-
-    local ok = pcall(function()
-        TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, player)
-    end)
-
-    task.delay(3, function()
-        if rejoinLbl and rejoinLbl.Parent then
-            rejoinLbl.Text = "🔁 REJOIN"
+    if charLbl and charLbl.Parent then
+        if morphEnabled then
+            charLbl.Text = "👤 CHAR PERM [ON]"
+            charLbl.TextColor3 = COR_LAVANDA
+            charBtn.BackgroundColor3 = COR_LAVANDA
+            charBtn.BackgroundTransparency = 0
+            charStroke.Color = COR_CIANO
+            charStroke.Transparency = 0.1
+            charAccent.BackgroundColor3 = COR_VERDE
+            charDot.BackgroundColor3 = COR_VERDE
+            charDotStroke.Color = COR_CIANO
+        else
+            charLbl.Text = "👤 CHAR PERM [OFF]"
+            charLbl.TextColor3 = COR_LAVANDA
+            charBtn.BackgroundColor3 = COR_CIANO
+            charBtn.BackgroundTransparency = 0.2
+            charStroke.Color = COR_CIANO
+            charStroke.Transparency = 0.2
+            charAccent.BackgroundColor3 = COR_LAVANDA
+            charDot.BackgroundColor3 = COR_LAVANDA
+            charDotStroke.Color = COR_VERDE
         end
-        rejoining = false
-        if not ok then
-            warn("[Sandevistan] Rejoin falhou.")
-        end
-    end)
-end))
+    end
+end
 
-local footerLabel = Instance.new("TextLabel")
-footerLabel.Size = UDim2.new(1, -8, 0, 10)
-footerLabel.Position = UDim2.new(0, 4, 1, -13)
-footerLabel.BackgroundTransparency = 1
-footerLabel.Text = "PRESSIONE [F] OU CLIQUE"
-footerLabel.TextColor3 = COR_CIANO
-footerLabel.Font = Enum.Font.Code
-footerLabel.TextSize = 6
-footerLabel.TextXAlignment = Enum.TextXAlignment.Center
-footerLabel.ZIndex = 4
-footerLabel.Parent = innerScreen
+--=============================================================
+-- ✨ TOGGLE CHAR
+--=============================================================
+local function toggleCharPerm()
+    morphEnabled = not morphEnabled
+    if morphEnabled then
+        task.spawn(function()
+            local ok = tryMorph()
+            if not ok then warn("[Sandevistan] Morph falhou ao ativar CHAR.") end
+        end)
+    else
+        task.spawn(revertMorph)
+    end
+    atualizarBotaoUI()
+end
 
-local hoverScale = Instance.new("UIScale")
-hoverScale.Scale = 1
-hoverScale.Parent = toggleBtn
-
+--=============================================================
+-- ✨ HOVER
+--=============================================================
 table.insert(connections, toggleBtn.MouseEnter:Connect(function()
     if not isActive then
         pcall(function()
@@ -765,7 +711,6 @@ table.insert(connections, toggleBtn.MouseEnter:Connect(function()
         toggleBtn.BackgroundColor3 = COR_VERDE
         toggleStroke.Color = COR_CIANO
         toggleStroke.Transparency = 0.1
-        toggleLbl.TextColor3 = COR_CIANO
     end
 end))
 
@@ -778,8 +723,31 @@ table.insert(connections, toggleBtn.MouseLeave:Connect(function()
         toggleBtn.BackgroundTransparency = 0.2
         toggleStroke.Color = COR_CIANO
         toggleStroke.Transparency = 0.2
-        toggleLbl.TextColor3 = COR_CIANO
     end
+end))
+
+table.insert(connections, charBtn.MouseEnter:Connect(function()
+    pcall(function()
+        TweenService:Create(charHoverScale, TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1.05}):Play()
+    end)
+    charBtn.BackgroundColor3 = COR_VERDE
+    charStroke.Color = COR_CIANO
+    charStroke.Transparency = 0.1
+end))
+
+table.insert(connections, charBtn.MouseLeave:Connect(function()
+    pcall(function()
+        TweenService:Create(charHoverScale, TweenInfo.new(0.15, Enum.EasingStyle.Quad), {Scale = 1}):Play()
+    end)
+    if morphEnabled then
+        charBtn.BackgroundColor3 = COR_LAVANDA
+        charBtn.BackgroundTransparency = 0
+    else
+        charBtn.BackgroundColor3 = COR_CIANO
+        charBtn.BackgroundTransparency = 0.2
+    end
+    charStroke.Color = COR_CIANO
+    charStroke.Transparency = 0.2
 end))
 
 --=============================================================
@@ -1186,9 +1154,24 @@ local function activateLagSwitch()
         seat.AssemblyAngularVelocity = Vector3.zero
         seat.AssemblyLinearVelocity = Vector3.zero
     end)
+
+    -- Watchdog: força cleanup se por algum motivo deactivate não rodar
+    if lagSwitchWatchdog then
+        pcall(function() task.cancel(lagSwitchWatchdog) end)
+    end
+    lagSwitchWatchdog = task.delay(SANDEVISTAN_DURATION + 1.5, function()
+        if activeSeat or activeWeld then
+            warn("[Sandevistan] Watchdog: lag switch travado, limpando.")
+            pcall(function() deactivateLagSwitch() end)
+        end
+    end)
 end
 
 local function deactivateLagSwitch()
+    if lagSwitchWatchdog then
+        pcall(function() task.cancel(lagSwitchWatchdog) end)
+        lagSwitchWatchdog = nil
+    end
     if activeWeld then
         pcall(function() activeWeld:Destroy() end)
         activeWeld = nil
@@ -1200,49 +1183,19 @@ local function deactivateLagSwitch()
 end
 
 --=============================================================
--- ✨ UI UPDATE
---=============================================================
-local function atualizarBotaoUI()
-    if not (screenGui and screenGui.Parent) then return end
-    if not (toggleLbl and toggleLbl.Parent) then return end
-
-    if isActive then
-        toggleLbl.Text = "⚡ SANDEVISTAN [ON]"
-        toggleLbl.TextColor3 = COR_LAVANDA
-        toggleBtn.BackgroundColor3 = COR_VERDE
-        toggleBtn.BackgroundTransparency = 0
-        toggleStroke.Color = COR_CIANO
-        toggleStroke.Transparency = 0.1
-        toggleAccent.BackgroundColor3 = COR_CIANO
-        liveDot.BackgroundColor3 = COR_VERDE
-        liveDotStroke.Color = COR_CIANO
-    else
-        toggleLbl.Text = "⚡ SANDEVISTAN [OFF]"
-        toggleLbl.TextColor3 = COR_CIANO
-        toggleBtn.BackgroundColor3 = COR_CIANO
-        toggleBtn.BackgroundTransparency = 0.2
-        toggleStroke.Color = COR_CIANO
-        toggleStroke.Transparency = 0.2
-        toggleAccent.BackgroundColor3 = COR_CIANO
-        liveDot.BackgroundColor3 = COR_CIANO
-        liveDotStroke.Color = COR_VERDE
-    end
-end
-
---=============================================================
 -- ✨ ARCHIVABLE
 --=============================================================
 local function captureOriginalArchivable()
-    if archivableCaptured then return end
-    if character then
-        originalArchivable = character.Archivable
-        archivableCaptured = true
-    end
+    if not character then return end
+    if archivableCaptured and archivableChar == character then return end
+    originalArchivable = character.Archivable
+    archivableCaptured = true
+    archivableChar = character
 end
 
 local function restoreArchivable()
     if not archivableCaptured then return end
-    if character then
+    if character and archivableChar == character then
         pcall(function() character.Archivable = originalArchivable end)
     end
 end
@@ -1402,8 +1355,20 @@ table.insert(connections, toggleBtn.MouseButton1Click:Connect(function()
     toggleSandevistan()
 end))
 
+table.insert(connections, charBtn.MouseButton1Click:Connect(function()
+    toggleCharPerm()
+end))
+
 local function bindCharacter(char)
     local newHum = char:WaitForChild("Humanoid", 10)
+
+    if player.Character ~= char or not char.Parent then return end
+
+    if character ~= char then
+        archivableCaptured = false
+        originalArchivable = nil
+        archivableChar = nil
+    end
 
     character = char
     humanoid = newHum
@@ -1414,7 +1379,7 @@ local function bindCharacter(char)
 
     if not normalSpeedCaptured and humanoid then
         normalSpeedCaptured = true
-        NORMAL_SPEED = humanoid.WalkSpeed
+        NORMAL_SPEED = math.max(humanoid.WalkSpeed, 16)   -- fix WalkSpeed 0
     end
 
     if isActive then
@@ -1422,6 +1387,7 @@ local function bindCharacter(char)
             char:WaitForChild("HumanoidRootPart", 5)
             if not isActive then return end
             if character ~= char or not char.Parent then return end
+            if player.Character ~= char then return end
 
             local hum2 = humanoid
             if not hum2 or not hum2.Parent then
@@ -1433,22 +1399,27 @@ local function bindCharacter(char)
             if hum2 and hum2.Parent then
                 pcall(function() hum2.WalkSpeed = BOOSTED_SPEED end)
             end
+            captureOriginalArchivable()
             pcall(function() char.Archivable = true end)
             attachMainParticles()
             activateLagSwitch()
         end)
     end
 
-    task.spawn(function()
-        task.wait(0.5)
-        if not character or not character.Parent then return end
-        local ok = tryMorph()
-        if ok then
-            print("[Sandevistan] Morph aplicado: " .. MORPH_USERNAME)
-        else
-            warn("[Sandevistan] Falha ao aplicar morph")
-        end
-    end)
+    -- MORPH: só se morphEnabled estiver ON
+    if morphEnabled then
+        task.spawn(function()
+            task.wait(0.5)
+            if not character or not character.Parent then return end
+            if player.Character ~= character then return end
+            local ok = tryMorph()
+            if ok then
+                print("[Sandevistan] Morph aplicado: " .. MORPH_USERNAME)
+            else
+                warn("[Sandevistan] Falha ao aplicar morph")
+            end
+        end)
+    end
 end
 
 table.insert(connections, player.CharacterAdded:Connect(bindCharacter))
@@ -1542,6 +1513,7 @@ end
 --=============================================================
 -- ✨ BOOT
 --=============================================================
-print("✨ SANDEVISTAN v4.1 — EDGERUNNERS EDITION")
+print("✨ SANDEVISTAN v4.6 — EDGERUNNERS EDITION")
 print("[Sandevistan] F ou clique: liga/desliga")
-print("[Sandevistan] Duração: 3.5s | Velocidade: 40")
+print("[Sandevistan] Duração: 3.5s | Velocidade: 60")
+print("[Sandevistan] CHAR PERM: toggle no menu (default OFF)")
