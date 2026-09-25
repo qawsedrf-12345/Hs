@@ -1,11 +1,11 @@
 --=============================================================
--- SANDEVISTAN v4.9 — EDGERUNNERS EDITION
--- Velocidade: 32 | Duração: 3.5s | Tecla: F | Char: toggle
+-- SANDEVISTAN v4.10 — EDGERUNNERS EDITION
+-- Velocidade: 28 | Duração: 3.5s | Tecla: F | Char: toggle
 -- Áudio 1 (swoosh): 97013920026153 | speed 1 | vol 0.15 | end 0.7
 -- Áudio 2 (main):   130840290979991 | speed 0.5 | vol 1 | start 1.9
--- Clones: spawnam andando, subindo, caindo ou pulando (NÃO parado)
+-- Clones: opacos, cor fixa por clone (gradiente contínuo, sem tween)
+-- FOV kick: 70 -> 100 na ativação
 -- Menu: SANDEVISTAN | CHAR PERM | SHIFTLOCK
--- Shiftlock: trava câmera no centro + rotaciona HRP (sem crosshair)
 --=============================================================
 
 --=============================================================
@@ -109,19 +109,34 @@ end
 --=============================================================
 -- ⚡ SETTINGS
 --=============================================================
+-- Tecla para ligar/desligar o Sandevistan
 local TOGGLE_KEY            = Enum.KeyCode.F
+
+-- Velocidade do jogador (studs/s)
 local NORMAL_SPEED          = 16
 local BOOSTED_SPEED         = 28
+
+-- Duração do efeito (segundos)
 local SANDEVISTAN_DURATION  = 3.5
+
+-- Configurações dos clones
 local CLONE_INTERVAL        = 0.05
 local MAX_CLONES            = 70
+local CLONE_TRANSPARENCY    = 0
+local CLONE_HIGHLIGHT_FILL  = 0.0
+local CLONE_HIGHLIGHT_LINE  = 0.2
+local CLONE_MATERIAL        = Enum.Material.Neon
+
+-- Cooldown anti-spam
 local TOGGLE_COOLDOWN       = 0.3
+
+-- Morph (CHAR PERM)
 local MORPH_USERNAME        = "ZiemekaTheSequel"
 
--- Velocidade mínima para o clone spawnar (studs/s) — usado no fallback
+-- Velocidade mínima para o clone spawnar
 local MOVE_THRESHOLD        = 2
 
--- Configs dos áudios
+-- Áudios
 local AUDIO_SWOOSH_ID       = "rbxassetid://97013920026153"
 local AUDIO_SWOOSH_SPEED    = 1
 local AUDIO_SWOOSH_VOLUME   = 0.15
@@ -131,6 +146,21 @@ local AUDIO_MAIN_ID         = "rbxassetid://130840290979991"
 local AUDIO_MAIN_SPEED      = 0.5
 local AUDIO_MAIN_VOLUME     = 1
 local AUDIO_MAIN_START      = 1.9
+
+-- FOV kick
+local FOV_BOOST             = 100
+local FOV_NORMAL            = 70
+
+-- Cor do mundo durante o Sandevistan
+local COR_MUNDO_ATIVO       = Color3.fromRGB(80, 240, 120)
+local MUNDO_CONTRAST        = 0.55
+local MUNDO_SATURATION      = 0.4
+local MUNDO_BRIGHTNESS      = 0.03
+
+-- Bloom
+local BLOOM_INTENSITY       = 1.2
+local BLOOM_THRESHOLD       = 1.2
+local BLOOM_SIZE            = 24
 
 --=============================================================
 -- ⚡ STATE
@@ -167,6 +197,7 @@ local originalArchivable    = nil
 local archivableCaptured    = false
 local archivableChar        = nil
 local pendingActivation     = false
+local originalFov           = nil
 
 --=============================================================
 -- 🎨 PALETA
@@ -187,7 +218,7 @@ colorCorrection.Parent = Lighting
 local bloomEffect = Instance.new("BloomEffect")
 bloomEffect.Name = "SandevistanBloom"
 bloomEffect.Intensity = 0
-bloomEffect.Size = 24
+bloomEffect.Size = BLOOM_SIZE
 bloomEffect.Threshold = 1.5
 bloomEffect.Parent = Lighting
 
@@ -261,21 +292,6 @@ local function getGradientColor(t)
     return PALETA_EDGERUNNERS[i]:Lerp(PALETA_EDGERUNNERS[i + 1], frac)
 end
 
-local effectColors = {
-    Active   = {
-        Contrast = 0.55,
-        Saturation = 0.4,
-        Brightness = 0.03,
-        TintColor = Color3.fromRGB(80, 240, 120)
-    },
-    Inactive = {
-        Contrast = 0,
-        Saturation = 0,
-        Brightness = 0,
-        TintColor = Color3.new(1, 1, 1)
-    }
-}
-
 --=============================================================
 -- ✨ HELPERS
 --=============================================================
@@ -318,6 +334,19 @@ local function isCharacterMoving()
     local vel = hrp.AssemblyLinearVelocity
     local speed3D = math.sqrt(vel.X * vel.X + vel.Y * vel.Y + vel.Z * vel.Z)
     return speed3D >= MOVE_THRESHOLD
+end
+
+-- FOV Kick
+local function applyFovKick(boost)
+    local cam = WS.CurrentCamera
+    if not cam then return end
+    if originalFov == nil then originalFov = cam.FieldOfView end
+    local target = boost and FOV_BOOST or (originalFov or FOV_NORMAL)
+    pcall(function()
+        TweenService:Create(cam, TweenInfo.new(boost and 0.35 or 0.6, Enum.EasingStyle.Quad), {
+            FieldOfView = target
+        }):Play()
+    end)
 end
 
 --=============================================================
@@ -1094,21 +1123,18 @@ local function toggleCharPerm()
 end
 
 --=============================================================
--- ✨ SHIFTLOCK (novo sistema — trava câmera no centro + rotaciona HRP)
+-- ✨ SHIFTLOCK
 --=============================================================
 local function applyShiftlock()
-    -- Trava o mouse no centro
     pcall(function()
         UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
     end)
 
-    -- Desconecta se já existir
     if shiftlockConnection then
         pcall(function() shiftlockConnection:Disconnect() end)
         shiftlockConnection = nil
     end
 
-    -- Loop: rotaciona o HRP pra onde a câmera olha
     shiftlockConnection = RunService.RenderStepped:Connect(function()
         if not shiftlockEnabled then return end
         local char = player.Character
@@ -1407,7 +1433,7 @@ local function cameraShake(duration, magnitude)
 end
 
 --=============================================================
--- ✨ CLONES
+-- ✨ CLONES (cor fixa por clone — original)
 --=============================================================
 local function createClone()
     if not isActive then return end
@@ -1437,6 +1463,7 @@ local function createClone()
     local humanoidClone = clone:FindFirstChildOfClass("Humanoid")
     if humanoidClone then humanoidClone:Destroy() end
 
+    -- Cor FIXA por clone (gradiente contínuo, sem tween)
     cloneColorIndex = cloneColorIndex + 1
     local step = (cloneColorIndex - 1) % MAX_CLONES
     local t = step / (MAX_CLONES - 1)
@@ -1446,8 +1473,8 @@ local function createClone()
         if obj:IsA("BasePart") then
             obj.Anchored = true
             obj.CanCollide = false
-            obj.Material = Enum.Material.Neon
-            obj.Transparency = 0
+            obj.Material = CLONE_MATERIAL
+            obj.Transparency = CLONE_TRANSPARENCY
             obj.Color = corDoClone
             obj.Reflectance = 0
         elseif obj:IsA("Decal") then
@@ -1458,8 +1485,8 @@ local function createClone()
             for _, part in ipairs(obj:GetDescendants()) do
                 if part:IsA("BasePart") then
                     part.Color = corDoClone
-                    part.Transparency = 0
-                    part.Material = Enum.Material.Neon
+                    part.Transparency = CLONE_TRANSPARENCY
+                    part.Material = CLONE_MATERIAL
                 elseif part:IsA("Decal") then
                     part.Transparency = 1
                 end
@@ -1470,8 +1497,8 @@ local function createClone()
     local highlight = Instance.new("Highlight")
     highlight.FillColor = corDoClone
     highlight.OutlineColor = corDoClone
-    highlight.FillTransparency = 0.0
-    highlight.OutlineTransparency = 0.2
+    highlight.FillTransparency = CLONE_HIGHLIGHT_FILL
+    highlight.OutlineTransparency = CLONE_HIGHLIGHT_LINE
     highlight.DepthMode = Enum.HighlightDepthMode.Occluded
     highlight.Parent = clone
 
@@ -1487,6 +1514,8 @@ local function createClone()
         trailParticle.SpreadAngle = Vector2.new(360, 360)
         trailParticle.Parent = cloneRoot
     end
+
+    -- Sem tween: cor fixa até o clone ser destruído
 
     table.insert(activeClones, { clone = clone, highlight = highlight })
 end
@@ -1537,12 +1566,26 @@ end
 --=============================================================
 local function setVisuals(active)
     pcall(function()
-        TweenService:Create(colorCorrection, TweenInfo.new(0.4), effectColors[active and "Active" or "Inactive"]):Play()
+        local target = active and {
+            Contrast = MUNDO_CONTRAST,
+            Saturation = MUNDO_SATURATION,
+            Brightness = MUNDO_BRIGHTNESS,
+            TintColor = COR_MUNDO_ATIVO
+        } or {
+            Contrast = 0,
+            Saturation = 0,
+            Brightness = 0,
+            TintColor = Color3.new(1, 1, 1)
+        }
+        TweenService:Create(colorCorrection, TweenInfo.new(0.4), target):Play()
     end)
 
     if active then
         pcall(function()
-            TweenService:Create(bloomEffect, TweenInfo.new(0.5), {Intensity = 1.2, Threshold = 1.2}):Play()
+            TweenService:Create(bloomEffect, TweenInfo.new(0.5), {
+                Intensity = BLOOM_INTENSITY,
+                Threshold = BLOOM_THRESHOLD
+            }):Play()
         end)
         if glitchOverlay then glitchOverlay.Visible = true end
 
@@ -1690,6 +1733,7 @@ activate = function()
         pcall(function() humanoid.WalkSpeed = BOOSTED_SPEED end)
 
         setVisuals(true)
+        applyFovKick(true)
 
         activateLagSwitch()
         attachMainParticles()
@@ -1727,6 +1771,7 @@ activate = function()
         pcall(function() deactivateLagSwitch() end)
         pcall(stopDurationBar)
         setVisuals(false)
+        applyFovKick(false)
         if humanoid and humanoid.Parent then
             pcall(function() humanoid.WalkSpeed = NORMAL_SPEED end)
         end
@@ -1762,6 +1807,7 @@ deactivate = function()
         end
 
         setVisuals(false)
+        applyFovKick(false)
         deactivateLagSwitch()
 
         restoreArchivable()
@@ -1785,6 +1831,7 @@ deactivate = function()
         pcall(function() removeMainParticles() end)
         pcall(function() deactivateLagSwitch() end)
         setVisuals(false)
+        applyFovKick(false)
         if humanoid and humanoid.Parent then
             pcall(function() humanoid.WalkSpeed = NORMAL_SPEED end)
         end
@@ -1893,7 +1940,6 @@ local function bindCharacter(char)
         end)
     end
 
-    -- Reaplica shiftlock ao respawnar
     if shiftlockEnabled then
         task.spawn(function()
             task.wait(0.5)
@@ -1947,6 +1993,11 @@ local function fullCleanup()
     pendingActivation = false
 
     pcall(clearShiftlock)
+
+    local cam = WS.CurrentCamera
+    if cam and originalFov then
+        pcall(function() cam.FieldOfView = originalFov end)
+    end
 
     if humanoid and humanoid.Parent then
         pcall(function() humanoid.WalkSpeed = NORMAL_SPEED end)
@@ -2013,9 +2064,9 @@ end
 --=============================================================
 -- ✨ BOOT
 --=============================================================
-print("✨ SANDEVISTAN v4.9 — EDGERUNNERS EDITION")
+print("✨ SANDEVISTAN v4.10 — EDGERUNNERS EDITION")
 print("[Sandevistan] F ou clique: liga/desliga")
-print("[Sandevistan] Duração: 3.5s | Velocidade: 32")
-print("[Sandevistan] Áudio: swoosh (0.15, 0.7s) -> main (0.5, em 1.9s)")
-print("[Sandevistan] Clones: spawnam andando, subindo, caindo, pulando (NÃO parado)")
+print("[Sandevistan] Duração: 3.5s | Velocidade: 28")
+print("[Sandevistan] Clones: opacos, cor fixa por clone (gradiente)")
+print("[Sandevistan] FOV kick: 70 -> 100 na ativação")
 print("[Sandevistan] Menu: SANDEVISTAN | CHAR PERM | SHIFTLOCK")
