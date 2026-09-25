@@ -1,9 +1,11 @@
 --=============================================================
 -- SANDEVISTAN v4.9 — EDGERUNNERS EDITION
--- Velocidade: 27 | Duração: 3.5s | Tecla: F | Char: toggle
+-- Velocidade: 32 | Duração: 3.5s | Tecla: F | Char: toggle
 -- Áudio 1 (swoosh): 97013920026153 | speed 1 | vol 0.15 | end 0.7
 -- Áudio 2 (main):   130840290979991 | speed 0.5 | vol 1 | start 1.9
 -- Clones: spawnam andando, subindo, caindo ou pulando (NÃO parado)
+-- Menu: SANDEVISTAN | CHAR PERM | SHIFTLOCK
+-- Shiftlock: trava câmera no centro + rotaciona HRP (sem crosshair)
 --=============================================================
 
 --=============================================================
@@ -92,7 +94,7 @@ do
         end
     end
 
-    killChildren(GUI_PARENT,  { "SandevistanGUI", "SandevistanFlashGui", "SandevistanBlackFlash", "SandevistanToast" })
+    killChildren(GUI_PARENT,  { "SandevistanGUI", "SandevistanFlashGui", "SandevistanBlackFlash", "SandevistanToast", "FakeShiftlockUI" })
     killChildren(WS,          { "SandevistanSound", "invischair" })
     killChildren(SoundService,{ "SandevistanSound", "SandevistanSwoosh" })
     killChildren(Lighting,    { "SandevistanEffect", "SandevistanBloom", "SandevistanBlur" })
@@ -109,7 +111,7 @@ end
 --=============================================================
 local TOGGLE_KEY            = Enum.KeyCode.F
 local NORMAL_SPEED          = 16
-local BOOSTED_SPEED         = 32
+local BOOSTED_SPEED         = 28
 local SANDEVISTAN_DURATION  = 3.5
 local CLONE_INTERVAL        = 0.05
 local MAX_CLONES            = 70
@@ -141,6 +143,8 @@ local normalSpeedCaptured   = false
 local soundReady            = false
 local soundLoaded           = false
 local morphEnabled          = false
+local shiftlockEnabled      = false
+local shiftlockConnection   = nil
 local lagSwitchWatchdog     = nil
 local flashGui              = nil
 local toastGui              = nil
@@ -234,14 +238,14 @@ end)
 -- 🎨 PALETA EDGERUNNERS
 --=============================================================
 local PALETA_EDGERUNNERS = {
-    Color3.fromRGB(160, 230, 240),   -- 1. Ciano claro pastel
-    Color3.fromRGB(100, 180, 235),   -- 2. Azul claro
-    Color3.fromRGB(110, 140, 220),   -- 3. Azul/roxo
-    Color3.fromRGB(160, 120, 210),   -- 4. Roxo/lilás
-    Color3.fromRGB(200, 110, 170),   -- 5. Magenta suave
-    Color3.fromRGB(220, 100, 110),   -- 6. Vermelho pastel
-    Color3.fromRGB(230, 160, 90),    -- 7. Laranja quente
-    Color3.fromRGB(230, 210, 120),   -- 8. Amarelo quente
+    Color3.fromRGB(160, 230, 240),
+    Color3.fromRGB(100, 180, 235),
+    Color3.fromRGB(110, 140, 220),
+    Color3.fromRGB(160, 120, 210),
+    Color3.fromRGB(200, 110, 170),
+    Color3.fromRGB(220, 100, 110),
+    Color3.fromRGB(230, 160, 90),
+    Color3.fromRGB(230, 210, 120),
 }
 
 local function getGradientColor(t)
@@ -298,12 +302,9 @@ local function waitTween(tween, timeout)
     if conn then pcall(function() conn:Disconnect() end) end
 end
 
--- Retorna true se o personagem está se movendo em qualquer direção
--- (andar, pular, subir, cair). Retorna false se estiver parado.
 local function isCharacterMoving()
     if not character or not character.Parent then return false end
 
-    -- 1) MoveDirection: pega o input do jogador (andar/subir/correr)
     local hum = character:FindFirstChildOfClass("Humanoid")
     if hum then
         local md = hum.MoveDirection
@@ -312,7 +313,6 @@ local function isCharacterMoving()
         end
     end
 
-    -- 2) Fallback: velocidade real do HRP (pega queda, empurrão, pulo)
     local hrp = character:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
     local vel = hrp.AssemblyLinearVelocity
@@ -324,7 +324,6 @@ end
 -- 🔊 SEQUÊNCIA DE ÁUDIOS
 --=============================================================
 local function playIntroAudioSequence()
-    -- FASE 1: swoosh (corta em 0.7s)
     if swoosh and swoosh.Parent then
         pcall(function()
             swoosh.TimePosition = 0
@@ -342,7 +341,6 @@ local function playIntroAudioSequence()
         task.wait(AUDIO_SWOOSH_END)
     end
 
-    -- FASE 2: main a partir de 1.9s
     if sound and sound.Parent then
         pcall(function()
             sound.TimePosition = AUDIO_MAIN_START
@@ -624,8 +622,8 @@ overlayStroke.Parent = glitchOverlay
 
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 120, 0, 90)
-mainFrame.Position = UDim2.new(0, 20, 0.35, -45)
+mainFrame.Size = UDim2.new(0, 120, 0, 120)
+mainFrame.Position = UDim2.new(0, 20, 0.35, -60)
 mainFrame.BackgroundColor3 = COR_CIANO
 mainFrame.BackgroundTransparency = 0.15
 mainFrame.BorderSizePixel = 0
@@ -869,12 +867,41 @@ charDotStroke.Transparency = 0.3
 charDotStroke.Parent = charDot
 
 --=============================================================
+-- ✨ LINHA 3: SHIFTLOCK
+--=============================================================
+local slLine = makeLine(62, COR_CIANO)
+local shiftBtn    = slLine.btn
+local shiftLbl    = slLine.lbl
+local shiftStroke = slLine.stroke
+local shiftAccent = slLine.accent
+local shiftHoverScale = slLine.hoverScale
+
+local shiftDot = Instance.new("Frame")
+shiftDot.Size = UDim2.new(0, 5, 0, 5)
+shiftDot.Position = UDim2.new(1, -8, 0.5, 0)
+shiftDot.AnchorPoint = Vector2.new(1, 0.5)
+shiftDot.BackgroundColor3 = COR_CIANO
+shiftDot.BorderSizePixel = 0
+shiftDot.ZIndex = 6
+shiftDot.Parent = shiftBtn
+
+local shiftDotCorner = Instance.new("UICorner")
+shiftDotCorner.CornerRadius = UDim.new(1, 0)
+shiftDotCorner.Parent = shiftDot
+
+local shiftDotStroke = Instance.new("UIStroke")
+shiftDotStroke.Color = COR_VERDE
+shiftDotStroke.Thickness = 1
+shiftDotStroke.Transparency = 0.3
+shiftDotStroke.Parent = shiftDot
+
+--=============================================================
 -- ✨ BARRA DE DURAÇÃO
 --=============================================================
 local durationBg = Instance.new("Frame")
 durationBg.Name = "DurationBg"
 durationBg.Size = UDim2.new(0.9, 0, 0, 4)
-durationBg.Position = UDim2.new(0.05, 0, 0, 62)
+durationBg.Position = UDim2.new(0.05, 0, 0, 92)
 durationBg.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 durationBg.BackgroundTransparency = 0.3
 durationBg.BorderSizePixel = 0
@@ -970,6 +997,30 @@ local function atualizarBotaoUI()
             charDotStroke.Color = COR_VERDE
         end
     end
+
+    if shiftLbl and shiftLbl.Parent then
+        if shiftlockEnabled then
+            shiftLbl.Text = "🔒 SHIFTLOCK [ON]"
+            shiftLbl.TextColor3 = COR_LAVANDA
+            shiftBtn.BackgroundColor3 = COR_VERDE
+            shiftBtn.BackgroundTransparency = 0
+            shiftStroke.Color = COR_CIANO
+            shiftStroke.Transparency = 0.1
+            shiftAccent.BackgroundColor3 = COR_CIANO
+            shiftDot.BackgroundColor3 = COR_VERDE
+            shiftDotStroke.Color = COR_CIANO
+        else
+            shiftLbl.Text = "🔒 SHIFTLOCK [OFF]"
+            shiftLbl.TextColor3 = COR_CIANO
+            shiftBtn.BackgroundColor3 = COR_CIANO
+            shiftBtn.BackgroundTransparency = 0.2
+            shiftStroke.Color = COR_CIANO
+            shiftStroke.Transparency = 0.2
+            shiftAccent.BackgroundColor3 = COR_CIANO
+            shiftDot.BackgroundColor3 = COR_CIANO
+            shiftDotStroke.Color = COR_VERDE
+        end
+    end
 end
 
 --=============================================================
@@ -1043,6 +1094,64 @@ local function toggleCharPerm()
 end
 
 --=============================================================
+-- ✨ SHIFTLOCK (novo sistema — trava câmera no centro + rotaciona HRP)
+--=============================================================
+local function applyShiftlock()
+    -- Trava o mouse no centro
+    pcall(function()
+        UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+    end)
+
+    -- Desconecta se já existir
+    if shiftlockConnection then
+        pcall(function() shiftlockConnection:Disconnect() end)
+        shiftlockConnection = nil
+    end
+
+    -- Loop: rotaciona o HRP pra onde a câmera olha
+    shiftlockConnection = RunService.RenderStepped:Connect(function()
+        if not shiftlockEnabled then return end
+        local char = player.Character
+        if not char then return end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        local cam = WS.CurrentCamera
+        if not cam then return end
+
+        local camCF = cam.CFrame
+        root.CFrame = CFrame.new(root.Position, Vector3.new(
+            camCF.LookVector.X + root.Position.X,
+            root.Position.Y,
+            camCF.LookVector.Z + root.Position.Z
+        ))
+    end)
+end
+
+local function clearShiftlock()
+    if shiftlockConnection then
+        pcall(function() shiftlockConnection:Disconnect() end)
+        shiftlockConnection = nil
+    end
+    pcall(function()
+        UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+    end)
+end
+
+local function toggleShiftlock()
+    shiftlockEnabled = not shiftlockEnabled
+
+    if shiftlockEnabled then
+        applyShiftlock()
+        showToast("🔒 SHIFTLOCK ATIVADO", COR_CIANO)
+    else
+        clearShiftlock()
+        showToast("🔓 SHIFTLOCK DESATIVADO", COR_LAVANDA)
+    end
+
+    atualizarBotaoUI()
+end
+
+--=============================================================
 -- ✨ HOVER
 --=============================================================
 table.insert(connections, toggleBtn.MouseEnter:Connect(function()
@@ -1090,6 +1199,30 @@ table.insert(connections, charBtn.MouseLeave:Connect(function()
     end
     charStroke.Color = COR_CIANO
     charStroke.Transparency = 0.2
+end))
+
+table.insert(connections, shiftBtn.MouseEnter:Connect(function()
+    pcall(function()
+        TweenService:Create(shiftHoverScale, TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1.05}):Play()
+    end)
+    shiftBtn.BackgroundColor3 = COR_VERDE
+    shiftStroke.Color = COR_CIANO
+    shiftStroke.Transparency = 0.1
+end))
+
+table.insert(connections, shiftBtn.MouseLeave:Connect(function()
+    pcall(function()
+        TweenService:Create(shiftHoverScale, TweenInfo.new(0.15, Enum.EasingStyle.Quad), {Scale = 1}):Play()
+    end)
+    if shiftlockEnabled then
+        shiftBtn.BackgroundColor3 = COR_VERDE
+        shiftBtn.BackgroundTransparency = 0
+    else
+        shiftBtn.BackgroundColor3 = COR_CIANO
+        shiftBtn.BackgroundTransparency = 0.2
+    end
+    shiftStroke.Color = COR_CIANO
+    shiftStroke.Transparency = 0.2
 end))
 
 --=============================================================
@@ -1274,7 +1407,7 @@ local function cameraShake(duration, magnitude)
 end
 
 --=============================================================
--- ✨ CLONES (gradiente pastelado + só em movimento)
+-- ✨ CLONES
 --=============================================================
 local function createClone()
     if not isActive then return end
@@ -1694,6 +1827,10 @@ table.insert(connections, charBtn.MouseButton1Click:Connect(function()
     toggleCharPerm()
 end))
 
+table.insert(connections, shiftBtn.MouseButton1Click:Connect(function()
+    toggleShiftlock()
+end))
+
 local function bindCharacter(char)
     local newHum = char:WaitForChild("Humanoid", 10)
 
@@ -1755,6 +1892,16 @@ local function bindCharacter(char)
             end
         end)
     end
+
+    -- Reaplica shiftlock ao respawnar
+    if shiftlockEnabled then
+        task.spawn(function()
+            task.wait(0.5)
+            if character == char and char.Parent then
+                applyShiftlock()
+            end
+        end)
+    end
 end
 
 table.insert(connections, player.CharacterAdded:Connect(bindCharacter))
@@ -1799,9 +1946,12 @@ local function fullCleanup()
     deactivateToken = deactivateToken + 1
     pendingActivation = false
 
+    pcall(clearShiftlock)
+
     if humanoid and humanoid.Parent then
         pcall(function() humanoid.WalkSpeed = NORMAL_SPEED end)
         pcall(function() humanoid.CameraOffset = Vector3.zero end)
+        pcall(function() humanoid.AutoRotate = true end)
     end
 
     isActive = false
@@ -1865,6 +2015,7 @@ end
 --=============================================================
 print("✨ SANDEVISTAN v4.9 — EDGERUNNERS EDITION")
 print("[Sandevistan] F ou clique: liga/desliga")
-print("[Sandevistan] Duração: 3.5s | Velocidade: 27")
+print("[Sandevistan] Duração: 3.5s | Velocidade: 32")
 print("[Sandevistan] Áudio: swoosh (0.15, 0.7s) -> main (0.5, em 1.9s)")
 print("[Sandevistan] Clones: spawnam andando, subindo, caindo, pulando (NÃO parado)")
+print("[Sandevistan] Menu: SANDEVISTAN | CHAR PERM | SHIFTLOCK")
