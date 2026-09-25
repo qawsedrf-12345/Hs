@@ -1,10 +1,9 @@
 --=============================================================
 -- SANDEVISTAN v4.9 — EDGERUNNERS EDITION
--- Velocidade: 30 | Duração: 3.5s | Tecla: F | Char: toggle
--- Áudio 1 (swoosh): 97013920026153 | speed 1 | vol 0.35 | end 0.7
--- Áudio 2 (main):   130840290979991 | speed 0.75 | vol 1.55 | start 1.9
--- Sequência: swoosh (0.7s) -> espera -> main começa em 1.9s + Sandevistan ativa
--- Clones: só spawnam em movimento
+-- Velocidade: 27 | Duração: 3.5s | Tecla: F | Char: toggle
+-- Áudio 1 (swoosh): 97013920026153 | speed 1 | vol 0.15 | end 0.7
+-- Áudio 2 (main):   130840290979991 | speed 0.5 | vol 1 | start 1.9
+-- Clones: spawnam andando, subindo, caindo ou pulando (NÃO parado)
 --=============================================================
 
 --=============================================================
@@ -117,19 +116,19 @@ local MAX_CLONES            = 70
 local TOGGLE_COOLDOWN       = 0.3
 local MORPH_USERNAME        = "ZiemekaTheSequel"
 
--- Velocidade mínima para o clone spawnar (studs/s)
+-- Velocidade mínima para o clone spawnar (studs/s) — usado no fallback
 local MOVE_THRESHOLD        = 2
 
 -- Configs dos áudios
 local AUDIO_SWOOSH_ID       = "rbxassetid://97013920026153"
 local AUDIO_SWOOSH_SPEED    = 1
-local AUDIO_SWOOSH_VOLUME   = 0.15   -- <-- diminuído (era 0.7)
-local AUDIO_SWOOSH_END      = 0.7    -- corta em 0.7s
+local AUDIO_SWOOSH_VOLUME   = 0.15
+local AUDIO_SWOOSH_END      = 0.7
 
 local AUDIO_MAIN_ID         = "rbxassetid://130840290979991"
-local AUDIO_MAIN_SPEED      = 0.5   -- <-- diminuído (era 1)
+local AUDIO_MAIN_SPEED      = 0.5
 local AUDIO_MAIN_VOLUME     = 1
-local AUDIO_MAIN_START      = 1.9    -- começa em 1.9s da track
+local AUDIO_MAIN_START      = 1.9
 
 --=============================================================
 -- ⚡ STATE
@@ -299,13 +298,26 @@ local function waitTween(tween, timeout)
     if conn then pcall(function() conn:Disconnect() end) end
 end
 
+-- Retorna true se o personagem está se movendo em qualquer direção
+-- (andar, pular, subir, cair). Retorna false se estiver parado.
 local function isCharacterMoving()
     if not character or not character.Parent then return false end
+
+    -- 1) MoveDirection: pega o input do jogador (andar/subir/correr)
+    local hum = character:FindFirstChildOfClass("Humanoid")
+    if hum then
+        local md = hum.MoveDirection
+        if md.Magnitude > 0.01 then
+            return true
+        end
+    end
+
+    -- 2) Fallback: velocidade real do HRP (pega queda, empurrão, pulo)
     local hrp = character:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
     local vel = hrp.AssemblyLinearVelocity
-    local planarSpeed = math.sqrt(vel.X * vel.X + vel.Z * vel.Z)
-    return planarSpeed >= MOVE_THRESHOLD
+    local speed3D = math.sqrt(vel.X * vel.X + vel.Y * vel.Y + vel.Z * vel.Z)
+    return speed3D >= MOVE_THRESHOLD
 end
 
 --=============================================================
@@ -1853,6 +1865,6 @@ end
 --=============================================================
 print("✨ SANDEVISTAN v4.9 — EDGERUNNERS EDITION")
 print("[Sandevistan] F ou clique: liga/desliga")
-print("[Sandevistan] Duração: 3.5s | Velocidade: 30")
-print("[Sandevistan] Áudio: swoosh (vol 0.35, 0.7s) -> main (speed 0.75, em 1.9s)")
-print("[Sandevistan] Clones: só spawnam em movimento")
+print("[Sandevistan] Duração: 3.5s | Velocidade: 27")
+print("[Sandevistan] Áudio: swoosh (0.15, 0.7s) -> main (0.5, em 1.9s)")
+print("[Sandevistan] Clones: spawnam andando, subindo, caindo, pulando (NÃO parado)")
