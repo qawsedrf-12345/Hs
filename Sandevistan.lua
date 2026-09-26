@@ -122,7 +122,7 @@ local SANDEVISTAN_DURATION  = 7.0
 -- Configurações dos clones
 local CLONE_INTERVAL        = 0.05
 local MAX_CLONES            = 70
-local CLONE_TRANSPARENCY    = 0
+local CLONE_TRANSPARENCY    = 0.8
 local CLONE_HIGHLIGHT_FILL  = 0.0
 local CLONE_HIGHLIGHT_LINE  = 0.2
 local CLONE_MATERIAL        = Enum.Material.Neon
