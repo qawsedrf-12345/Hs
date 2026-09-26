@@ -1,10 +1,9 @@
 --=============================================================
 -- SANDEVISTAN v4.10 — EDGERUNNERS EDITION
--- Velocidade: 28 | Duração: 3.5s | Tecla: F | Char: toggle
+-- Velocidade: 38 | Duração: 3.5s | Tecla: F | Char: toggle
 -- Áudio 1 (swoosh): 97013920026153 | speed 1 | vol 0.15 | end 0.7
 -- Áudio 2 (main):   130840290979991 | speed 0.5 | vol 1 | start 1.9
--- Clones: opacos, cor fixa por clone (gradiente contínuo)
--- Suavização proporcional ao nº de clones (menos clones = menos suavização)
+-- Clones: opacos, cor fixa por clone, PERMANENTES até o fim dos 3.5s
 -- FOV kick: 70 -> 100 na ativação
 -- Menu: SANDEVISTAN | CHAR PERM | SHIFTLOCK
 --=============================================================
@@ -115,25 +114,26 @@ local TOGGLE_KEY            = Enum.KeyCode.F
 
 -- Velocidade do jogador (studs/s)
 local NORMAL_SPEED          = 16
-local BOOSTED_SPEED         = 38
+local BOOSTED_SPEED         = 35
 
 -- Duração do efeito (segundos)
 local SANDEVISTAN_DURATION  = 3.5
 
 -- Configurações dos clones
 local CLONE_INTERVAL        = 0.02
-local MAX_CLONES            = 70
+
+-- ✅ 0 = SEM LIMITE → clones ficam permanentes até o fim do Sandevistan
+-- (todos os clones criados sobrevivem até o deactivate)
+local MAX_CLONES            = 0
+
 local CLONE_TRANSPARENCY    = 0
 local CLONE_HIGHLIGHT_FILL  = 0.0
 local CLONE_HIGHLIGHT_LINE  = 0.2
 local CLONE_MATERIAL        = Enum.Material.Neon
 
--- ✅ Suavização PROPORCIONAL ao nº de clones
--- Quanto menos clones → menos suavização
--- Quanto mais clones → mais suavização
--- Ex.: 70 clones × 0.001 = 0.07s  |  10 clones = 0.01s  |  140 clones = 0.14s
+-- Suavização PROPORCIONAL ao nº de clones
 local COLOR_TRANSITION_PER_CLONE = 0.001
-local COLOR_TRANSITION_TIME      = MAX_CLONES * COLOR_TRANSITION_PER_CLONE
+local COLOR_TRANSITION_TIME      = (MAX_CLONES > 0 and MAX_CLONES or 70) * COLOR_TRANSITION_PER_CLONE
 
 -- Cooldown anti-spam
 local TOGGLE_COOLDOWN       = 0.3
@@ -152,7 +152,7 @@ local AUDIO_SWOOSH_END      = 0.7
 
 local AUDIO_MAIN_ID         = "rbxassetid://130840290979991"
 local AUDIO_MAIN_SPEED      = 0.5
-local AUDIO_MAIN_VOLUME     = 1
+local AUDIO_MAIN_VOLUME     = 2
 local AUDIO_MAIN_START      = 1.9
 
 -- FOV kick
@@ -1442,7 +1442,7 @@ local function cameraShake(duration, magnitude)
 end
 
 --=============================================================
--- ✨ CLONES (cor fixa por clone — gradiente contínuo + suavização escalonada)
+-- ✨ CLONES (PERMANENTES até o fim do Sandevistan)
 --=============================================================
 local function createClone()
     if not isActive then return end
@@ -1450,12 +1450,10 @@ local function createClone()
     if not character:FindFirstChild("HumanoidRootPart") then return end
     if not isCharacterMoving() then return end
 
-    -- Recicla o clone mais antigo em vez de parar de criar
-    if #activeClones >= MAX_CLONES then
-        local oldest = table.remove(activeClones, 1)
-        if oldest and oldest.clone and oldest.clone.Parent then
-            pcall(function() oldest.clone:Destroy() end)
-        end
+    -- ✅ FIX: NÃO recicla nem bloqueia — clones ficam PERMANENTES até o deactivate()
+    -- MAX_CLONES = 0 → sem limite. Se MAX_CLONES > 0, usa como trava de segurança.
+    if MAX_CLONES > 0 and #activeClones >= MAX_CLONES then
+        return
     end
 
     local root = character:FindFirstChild("HumanoidRootPart")
@@ -1479,13 +1477,14 @@ local function createClone()
     local humanoidClone = clone:FindFirstChildOfClass("Humanoid")
     if humanoidClone then humanoidClone:Destroy() end
 
-    -- Índice cicla infinitamente (1..MAX_CLONES)
-    cloneColorIndex = (cloneColorIndex % MAX_CLONES) + 1
-    local step = (cloneColorIndex - 1) % MAX_CLONES
-    local t = step / (MAX_CLONES - 1)
+    -- Índice cicla infinitamente — usa 70 como referência da paleta
+    local paletteSize = 70
+    cloneColorIndex = (cloneColorIndex % paletteSize) + 1
+    local step = (cloneColorIndex - 1) % paletteSize
+    local t = step / (paletteSize - 1)
     local corDoClone = getGradientColor(t)
 
-    -- ✅ Suavização escalonada: parte da cor anterior e faz tween para a nova
+    -- Suavização escalonada: parte da cor anterior e faz tween para a nova
     local corAnterior = lastCloneColor or corDoClone
     lastCloneColor = corDoClone
 
@@ -1539,7 +1538,6 @@ local function createClone()
         trailParticle.Parent = cloneRoot
     end
 
-    -- ✅ Tween com duração escalonada pelo nº de clones
     if COLOR_TRANSITION_TIME > 0 then
         task.spawn(function()
             if not clone.Parent then return end
@@ -2112,8 +2110,7 @@ end
 --=============================================================
 print("✨ SANDEVISTAN v4.10 — EDGERUNNERS EDITION")
 print("[Sandevistan] F ou clique: liga/desliga")
-print("[Sandevistan] Duração: 3.5s | Velocidade: 28")
-print("[Sandevistan] Clones: cor fixa + suavização escalonada")
-print(string.format("[Sandevistan] MaxClones=%d | Suavização=%.3fs", MAX_CLONES, COLOR_TRANSITION_TIME))
+print("[Sandevistan] Duração: 3.5s | Velocidade: 38")
+print("[Sandevistan] Clones: PERMANENTES até o fim dos 3.5s")
 print("[Sandevistan] FOV kick: 70 -> 100 na ativação")
 print("[Sandevistan] Menu: SANDEVISTAN | CHAR PERM | SHIFTLOCK")
