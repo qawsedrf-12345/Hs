@@ -115,14 +115,14 @@ local TOGGLE_KEY            = Enum.KeyCode.F
 
 -- Velocidade do jogador (studs/s)
 local NORMAL_SPEED          = 16
-local BOOSTED_SPEED         = 28
+local BOOSTED_SPEED         = 30
 
 -- Duração do efeito (segundos)
 local SANDEVISTAN_DURATION  = 3.5
 
 -- Configurações dos clones
-local CLONE_INTERVAL        = 0.1
-local MAX_CLONES            = 40
+local CLONE_INTERVAL        = 0.05
+local MAX_CLONES            = 70
 local CLONE_TRANSPARENCY    = 0
 local CLONE_HIGHLIGHT_FILL  = 0.0
 local CLONE_HIGHLIGHT_LINE  = 0.2
