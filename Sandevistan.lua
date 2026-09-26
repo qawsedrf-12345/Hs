@@ -1,9 +1,9 @@
 --=============================================================
--- SANDEVISTAN v4.10 — EDGERUNNERS EDITION
+-- SANDEVISTAN v4.11 — EDGERUNNERS EDITION
 -- Velocidade: 18 | Duração: 8s | Tecla: F | Char: toggle
 -- Áudio 1 (swoosh): 97013920026153 | speed 1 | vol 0.15 | end 0.7
 -- Áudio 2 (main):   130840290979991 | speed 0.5 | vol 2 | start 1.9
--- Clones: nascem em cima do player + cores em LOOP suave
+-- Clones: nascem em cima do player + cores em LOOP suave (leve)
 -- FOV kick: 70 -> 100 na ativação
 -- Menu: SANDEVISTAN | CHAR PERM | SHIFTLOCK
 --=============================================================
@@ -114,12 +114,15 @@ local NORMAL_SPEED          = 16
 local BOOSTED_SPEED         = 18
 local SANDEVISTAN_DURATION  = 8
 
-local CLONE_INTERVAL        = 0.01    -- era 0.05 → cor troca rápido
-local MAX_CLONES            = 40      -- era 140 → ciclo curto e glitchado
+local CLONE_INTERVAL        = 0.1
+local MAX_CLONES            = 40
 local CLONE_TRANSPARENCY    = 0
 local CLONE_HIGHLIGHT_FILL  = 0.0
 local CLONE_HIGHLIGHT_LINE  = 0.2
 local CLONE_MATERIAL        = Enum.Material.Neon
+
+-- ✅ NOVO: suavização leve da cor (bem curto)
+local COLOR_TRANSITION_TIME = 0.06
 
 local TOGGLE_COOLDOWN       = 0.3
 local MORPH_USERNAME        = "ZiemekaTheSequel"
@@ -181,6 +184,7 @@ local activeSeat            = nil
 local activeWeld            = nil
 local activeClones          = {}
 local cloneColorIndex       = 0
+local lastCloneColor        = nil   -- ✅ NOVO
 local connections           = {}
 local morphUserId           = nil
 local running               = true
@@ -261,15 +265,15 @@ end)
 -- 🎨 PALETA EDGERUNNERS (loop fechado — ciano duplicado no fim)
 --=============================================================
 local PALETA_EDGERUNNERS = {
-    Color3.fromRGB(160, 230, 240),   -- 1. ciano claro
-    Color3.fromRGB(100, 180, 235),   -- 2. azul
-    Color3.fromRGB(110, 140, 220),   -- 3. azul/roxo
-    Color3.fromRGB(160, 120, 210),   -- 4. roxo
-    Color3.fromRGB(200, 110, 170),   -- 5. magenta
-    Color3.fromRGB(220, 100, 110),   -- 6. vermelho
-    Color3.fromRGB(230, 160, 90),    -- 7. laranja
-    Color3.fromRGB(230, 210, 120),   -- 8. amarelo
-    Color3.fromRGB(160, 230, 240),   -- 9. ciano de novo (fecha o loop)
+    Color3.fromRGB(160, 230, 240),
+    Color3.fromRGB(100, 180, 235),
+    Color3.fromRGB(110, 140, 220),
+    Color3.fromRGB(160, 120, 210),
+    Color3.fromRGB(200, 110, 170),
+    Color3.fromRGB(220, 100, 110),
+    Color3.fromRGB(230, 160, 90),
+    Color3.fromRGB(230, 210, 120),
+    Color3.fromRGB(160, 230, 240),
 }
 
 local function getGradientColor(t)
@@ -1432,8 +1436,15 @@ local function createClone()
     if not isActive then return end
     if not character or not character.Parent then return end
     if not character:FindFirstChild("HumanoidRootPart") then return end
-    if #activeClones >= MAX_CLONES then return end
     if not isCharacterMoving() then return end
+
+    -- ✅ FIX: recicla o clone mais antigo em vez de parar de criar
+    if #activeClones >= MAX_CLONES then
+        local oldest = table.remove(activeClones, 1)
+        if oldest and oldest.clone and oldest.clone.Parent then
+            pcall(function() oldest.clone:Destroy() end)
+        end
+    end
 
     local root = character:FindFirstChild("HumanoidRootPart")
     if not root then return end
@@ -1456,11 +1467,17 @@ local function createClone()
     local humanoidClone = clone:FindFirstChildOfClass("Humanoid")
     if humanoidClone then humanoidClone:Destroy() end
 
-    -- Cor FIXA por clone — gradiente em LOOP (paleta fecha com ciano)
-    cloneColorIndex = cloneColorIndex + 1
+    -- ✅ FIX: índice cicla infinitamente (1..MAX_CLONES)
+    cloneColorIndex = (cloneColorIndex % MAX_CLONES) + 1
     local step = (cloneColorIndex - 1) % MAX_CLONES
     local t = step / (MAX_CLONES - 1)
     local corDoClone = getGradientColor(t)
+
+    -- ✅ Suavização leve: parte da cor anterior e tween para a nova
+    local corAnterior = lastCloneColor or corDoClone
+    lastCloneColor = corDoClone
+
+    local partsToTween = {}
 
     for _, obj in ipairs(clone:GetDescendants()) do
         if obj:IsA("BasePart") then
@@ -1468,8 +1485,9 @@ local function createClone()
             obj.CanCollide = false
             obj.Material = CLONE_MATERIAL
             obj.Transparency = CLONE_TRANSPARENCY
-            obj.Color = corDoClone
+            obj.Color = corAnterior  -- começa na cor anterior
             obj.Reflectance = 0
+            table.insert(partsToTween, obj)
         elseif obj:IsA("Decal") then
             obj.Transparency = 1
         elseif obj:IsA("Clothing") then
@@ -1477,9 +1495,10 @@ local function createClone()
         elseif obj:IsA("Accessory") then
             for _, part in ipairs(obj:GetDescendants()) do
                 if part:IsA("BasePart") then
-                    part.Color = corDoClone
+                    part.Color = corAnterior
                     part.Transparency = CLONE_TRANSPARENCY
                     part.Material = CLONE_MATERIAL
+                    table.insert(partsToTween, part)
                 elseif part:IsA("Decal") then
                     part.Transparency = 1
                 end
@@ -1488,8 +1507,8 @@ local function createClone()
     end
 
     local highlight = Instance.new("Highlight")
-    highlight.FillColor = corDoClone
-    highlight.OutlineColor = corDoClone
+    highlight.FillColor = corAnterior
+    highlight.OutlineColor = corAnterior
     highlight.FillTransparency = CLONE_HIGHLIGHT_FILL
     highlight.OutlineTransparency = CLONE_HIGHLIGHT_LINE
     highlight.DepthMode = Enum.HighlightDepthMode.Occluded
@@ -1507,6 +1526,27 @@ local function createClone()
         trailParticle.SpreadAngle = Vector2.new(360, 360)
         trailParticle.Parent = cloneRoot
     end
+
+    -- ✅ Tween curto: 0.06s = suavização bem leve
+    task.spawn(function()
+        if not clone.Parent then return end
+        local tweenInfo = TweenInfo.new(COLOR_TRANSITION_TIME, Enum.EasingStyle.Linear)
+        for _, part in ipairs(partsToTween) do
+            if part and part.Parent then
+                pcall(function()
+                    TweenService:Create(part, tweenInfo, { Color = corDoClone }):Play()
+                end)
+            end
+        end
+        if highlight and highlight.Parent then
+            pcall(function()
+                TweenService:Create(highlight, tweenInfo, {
+                    FillColor = corDoClone,
+                    OutlineColor = corDoClone
+                }):Play()
+            end)
+        end
+    end)
 
     table.insert(activeClones, { clone = clone, highlight = highlight })
 end
@@ -1717,6 +1757,7 @@ activate = function()
     pendingActivation = false
     isActive = true
     cloneColorIndex = 0
+    lastCloneColor = nil  -- ✅ reset do loop de cor
     captureOriginalArchivable()
 
     local ok, err = xpcall(function()
@@ -2055,9 +2096,9 @@ end
 --=============================================================
 -- ✨ BOOT
 --=============================================================
-print("✨ SANDEVISTAN v4.10 — EDGERUNNERS EDITION")
+print("✨ SANDEVISTAN v4.11 — EDGERUNNERS EDITION")
 print("[Sandevistan] F ou clique: liga/desliga")
 print("[Sandevistan] Duração: 8s | Velocidade: 18")
-print("[Sandevistan] Clones: em cima do player, cores em LOOP suave")
+print("[Sandevistan] Clones: em cima do player, cores em LOOP suave (leve)")
 print("[Sandevistan] FOV kick: 70 -> 100 na ativação (0.6s)")
 print("[Sandevistan] Menu: SANDEVISTAN | CHAR PERM | SHIFTLOCK")
