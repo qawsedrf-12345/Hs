@@ -115,7 +115,7 @@ local TOGGLE_KEY            = Enum.KeyCode.F
 
 -- Velocidade do jogador (studs/s)
 local NORMAL_SPEED          = 16
-local BOOSTED_SPEED         = 32
+local BOOSTED_SPEED         = 38
 
 -- Duração do efeito (segundos)
 local SANDEVISTAN_DURATION  = 3.5
