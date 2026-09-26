@@ -114,14 +114,14 @@ local TOGGLE_KEY            = Enum.KeyCode.F
 
 -- Velocidade do jogador (studs/s)
 local NORMAL_SPEED          = 16
-local BOOSTED_SPEED         = 22
+local BOOSTED_SPEED         = 20
 
 -- Duração do efeito (segundos)
 local SANDEVISTAN_DURATION  = 7.0
 
 -- Configurações dos clones
 local CLONE_INTERVAL        = 0.05
-local MAX_CLONES            = 240
+local MAX_CLONES            = 140
 local CLONE_TRANSPARENCY    = 0
 local CLONE_HIGHLIGHT_FILL  = 0.0
 local CLONE_HIGHLIGHT_LINE  = 0.2
@@ -143,7 +143,7 @@ local AUDIO_SWOOSH_VOLUME   = 0.15
 local AUDIO_SWOOSH_END      = 0.7
 
 local AUDIO_MAIN_ID         = "rbxassetid://130840290979991"
-local AUDIO_MAIN_SPEED      = 0.2
+local AUDIO_MAIN_SPEED      = 0.25
 local AUDIO_MAIN_VOLUME     = 2
 local AUDIO_MAIN_START      = 1.9
 
