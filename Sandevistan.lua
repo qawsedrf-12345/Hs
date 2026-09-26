@@ -114,13 +114,13 @@ local TOGGLE_KEY            = Enum.KeyCode.F
 
 -- Velocidade do jogador (studs/s)
 local NORMAL_SPEED          = 16
-local BOOSTED_SPEED         = 25
+local BOOSTED_SPEED         = 20
 
 -- Duração do efeito (segundos)
 local SANDEVISTAN_DURATION  = 3.5
 
 -- Configurações dos clones
-local CLONE_INTERVAL        = 0.1
+local CLONE_INTERVAL        = 0.01
 
 -- ✅ 0 = SEM LIMITE → clones ficam permanentes até o fim do Sandevistan
 -- (todos os clones criados sobrevivem até o deactivate)
