@@ -120,7 +120,7 @@ local BOOSTED_SPEED         = 65
 local SANDEVISTAN_DURATION  = 3.5
 
 -- Configurações dos clones
-local CLONE_INTERVAL        = 0.09
+local CLONE_INTERVAL        = 0.04
 
 -- ✅ 0 = SEM LIMITE → clones ficam permanentes até o fim do Sandevistan
 -- (todos os clones criados sobrevivem até o deactivate)
