@@ -114,7 +114,7 @@ local NORMAL_SPEED          = 16
 local BOOSTED_SPEED         = 18
 local SANDEVISTAN_DURATION  = 8
 
-local CLONE_INTERVAL        = 0.1
+local CLONE_INTERVAL        = 0.2
 local MAX_CLONES            = 40
 local CLONE_TRANSPARENCY    = 0
 local CLONE_HIGHLIGHT_FILL  = 0.0
