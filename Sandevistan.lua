@@ -1,9 +1,9 @@
 --=============================================================
 -- SANDEVISTAN v4.10 — EDGERUNNERS EDITION
--- Velocidade: 28 | Duração: 3.5s | Tecla: F | Char: toggle
+-- Velocidade: 18 | Duração: 8s | Tecla: F | Char: toggle
 -- Áudio 1 (swoosh): 97013920026153 | speed 1 | vol 0.15 | end 0.7
--- Áudio 2 (main):   130840290979991 | speed 0.5 | vol 1 | start 1.9
--- Clones: opacos, cor fixa por clone (gradiente contínuo, sem tween)
+-- Áudio 2 (main):   130840290979991 | speed 0.5 | vol 2 | start 1.9
+-- Clones: nascem em cima do player + cores em LOOP suave
 -- FOV kick: 70 -> 100 na ativação
 -- Menu: SANDEVISTAN | CHAR PERM | SHIFTLOCK
 --=============================================================
@@ -109,31 +109,20 @@ end
 --=============================================================
 -- ⚡ SETTINGS
 --=============================================================
--- Tecla para ligar/desligar o Sandevistan
 local TOGGLE_KEY            = Enum.KeyCode.F
-
--- Velocidade do jogador (studs/s)
 local NORMAL_SPEED          = 16
 local BOOSTED_SPEED         = 18
+local SANDEVISTAN_DURATION  = 8
 
--- Duração do efeito (segundos)
-local SANDEVISTAN_DURATION  = 3.5
-
--- Configurações dos clones
-local CLONE_INTERVAL        = 0.025
-local MAX_CLONES            = 140
+local CLONE_INTERVAL        = 0.01    -- era 0.05 → cor troca rápido
+local MAX_CLONES            = 40      -- era 140 → ciclo curto e glitchado
 local CLONE_TRANSPARENCY    = 0
 local CLONE_HIGHLIGHT_FILL  = 0.0
 local CLONE_HIGHLIGHT_LINE  = 0.2
 local CLONE_MATERIAL        = Enum.Material.Neon
 
--- Cooldown anti-spam
 local TOGGLE_COOLDOWN       = 0.3
-
--- Morph (CHAR PERM)
 local MORPH_USERNAME        = "ZiemekaTheSequel"
-
--- Velocidade mínima para o clone spawnar
 local MOVE_THRESHOLD        = 2
 
 -- Áudios
@@ -150,8 +139,10 @@ local AUDIO_MAIN_START      = 1.9
 -- FOV kick
 local FOV_BOOST             = 100
 local FOV_NORMAL            = 70
+local FOV_BOOST_TIME        = 0.6
+local FOV_RESTORE_TIME      = 1.2
 
--- Cor do mundo durante o Sandevistan
+-- Cor do mundo
 local COR_MUNDO_ATIVO       = Color3.fromRGB(80, 240, 120)
 local MUNDO_CONTRAST        = 0.55
 local MUNDO_SATURATION      = 0.4
@@ -161,6 +152,7 @@ local MUNDO_BRIGHTNESS      = 0.03
 local BLOOM_INTENSITY       = 1.2
 local BLOOM_THRESHOLD       = 1.2
 local BLOOM_SIZE            = 24
+local BLOOM_RAMP_TIME       = 0.8
 
 --=============================================================
 -- ⚡ STATE
@@ -266,17 +258,18 @@ task.spawn(function()
 end)
 
 --=============================================================
--- 🎨 PALETA EDGERUNNERS
+-- 🎨 PALETA EDGERUNNERS (loop fechado — ciano duplicado no fim)
 --=============================================================
 local PALETA_EDGERUNNERS = {
-    Color3.fromRGB(160, 230, 240),
-    Color3.fromRGB(100, 180, 235),
-    Color3.fromRGB(110, 140, 220),
-    Color3.fromRGB(160, 120, 210),
-    Color3.fromRGB(200, 110, 170),
-    Color3.fromRGB(220, 100, 110),
-    Color3.fromRGB(230, 160, 90),
-    Color3.fromRGB(230, 210, 120),
+    Color3.fromRGB(160, 230, 240),   -- 1. ciano claro
+    Color3.fromRGB(100, 180, 235),   -- 2. azul
+    Color3.fromRGB(110, 140, 220),   -- 3. azul/roxo
+    Color3.fromRGB(160, 120, 210),   -- 4. roxo
+    Color3.fromRGB(200, 110, 170),   -- 5. magenta
+    Color3.fromRGB(220, 100, 110),   -- 6. vermelho
+    Color3.fromRGB(230, 160, 90),    -- 7. laranja
+    Color3.fromRGB(230, 210, 120),   -- 8. amarelo
+    Color3.fromRGB(160, 230, 240),   -- 9. ciano de novo (fecha o loop)
 }
 
 local function getGradientColor(t)
@@ -336,14 +329,14 @@ local function isCharacterMoving()
     return speed3D >= MOVE_THRESHOLD
 end
 
--- FOV Kick
 local function applyFovKick(boost)
     local cam = WS.CurrentCamera
     if not cam then return end
     if originalFov == nil then originalFov = cam.FieldOfView end
     local target = boost and FOV_BOOST or (originalFov or FOV_NORMAL)
+    local t = boost and FOV_BOOST_TIME or FOV_RESTORE_TIME
     pcall(function()
-        TweenService:Create(cam, TweenInfo.new(boost and 0.35 or 0.6, Enum.EasingStyle.Quad), {
+        TweenService:Create(cam, TweenInfo.new(t, Enum.EasingStyle.Quad), {
             FieldOfView = target
         }):Play()
     end)
@@ -1345,7 +1338,7 @@ local function flashScreen()
     flash.ZIndex = 999
     flash.Parent = newGui
 
-    local tweenIn = TweenService:Create(flash, TweenInfo.new(0.05), { BackgroundTransparency = 0 })
+    local tweenIn = TweenService:Create(flash, TweenInfo.new(0.08), { BackgroundTransparency = 0 })
     tweenIn:Play()
     waitTween(tweenIn, 0.5)
 
@@ -1354,7 +1347,7 @@ local function flashScreen()
         return
     end
 
-    local tweenOut = TweenService:Create(flash, TweenInfo.new(0.3), { BackgroundTransparency = 1 })
+    local tweenOut = TweenService:Create(flash, TweenInfo.new(0.5), { BackgroundTransparency = 1 })
     tweenOut:Play()
     waitTween(tweenOut, 0.8)
 
@@ -1392,7 +1385,7 @@ local function blackFlash()
 
     task.wait(0.1)
 
-    local tweenOut = TweenService:Create(flash, TweenInfo.new(0.15), { BackgroundTransparency = 1 })
+    local tweenOut = TweenService:Create(flash, TweenInfo.new(0.25), { BackgroundTransparency = 1 })
     tweenOut:Play()
     waitTween(tweenOut, 0.5)
 
@@ -1433,7 +1426,7 @@ local function cameraShake(duration, magnitude)
 end
 
 --=============================================================
--- ✨ CLONES (cor fixa por clone — original)
+-- ✨ CLONES
 --=============================================================
 local function createClone()
     if not isActive then return end
@@ -1463,7 +1456,7 @@ local function createClone()
     local humanoidClone = clone:FindFirstChildOfClass("Humanoid")
     if humanoidClone then humanoidClone:Destroy() end
 
-    -- Cor FIXA por clone (gradiente contínuo, sem tween)
+    -- Cor FIXA por clone — gradiente em LOOP (paleta fecha com ciano)
     cloneColorIndex = cloneColorIndex + 1
     local step = (cloneColorIndex - 1) % MAX_CLONES
     local t = step / (MAX_CLONES - 1)
@@ -1514,8 +1507,6 @@ local function createClone()
         trailParticle.SpreadAngle = Vector2.new(360, 360)
         trailParticle.Parent = cloneRoot
     end
-
-    -- Sem tween: cor fixa até o clone ser destruído
 
     table.insert(activeClones, { clone = clone, highlight = highlight })
 end
@@ -1577,12 +1568,12 @@ local function setVisuals(active)
             Brightness = 0,
             TintColor = Color3.new(1, 1, 1)
         }
-        TweenService:Create(colorCorrection, TweenInfo.new(0.4), target):Play()
+        TweenService:Create(colorCorrection, TweenInfo.new(0.6), target):Play()
     end)
 
     if active then
         pcall(function()
-            TweenService:Create(bloomEffect, TweenInfo.new(0.5), {
+            TweenService:Create(bloomEffect, TweenInfo.new(BLOOM_RAMP_TIME), {
                 Intensity = BLOOM_INTENSITY,
                 Threshold = BLOOM_THRESHOLD
             }):Play()
@@ -1594,21 +1585,21 @@ local function setVisuals(active)
             task.spawn(function()
                 while isActive and glitchOverlay and glitchOverlay.Parent do
                     pcall(function()
-                        TweenService:Create(overlayStroke, TweenInfo.new(0.5), {Transparency = 0.6}):Play()
+                        TweenService:Create(overlayStroke, TweenInfo.new(0.7), {Transparency = 0.6}):Play()
                     end)
-                    task.wait(0.5)
+                    task.wait(0.7)
                     if not (isActive and glitchOverlay and glitchOverlay.Parent) then break end
                     pcall(function()
-                        TweenService:Create(overlayStroke, TweenInfo.new(0.5), {Transparency = 0.9}):Play()
+                        TweenService:Create(overlayStroke, TweenInfo.new(0.7), {Transparency = 0.9}):Play()
                     end)
-                    task.wait(0.5)
+                    task.wait(0.7)
                 end
                 glitchPulseRunning = false
             end)
         end
     else
         pcall(function()
-            TweenService:Create(bloomEffect, TweenInfo.new(0.5), {Intensity = 0, Threshold = 1.5}):Play()
+            TweenService:Create(bloomEffect, TweenInfo.new(1.0), {Intensity = 0, Threshold = 1.5}):Play()
         end)
         if glitchOverlay then glitchOverlay.Visible = false end
         if overlayStroke then overlayStroke.Transparency = 1 end
@@ -1740,7 +1731,7 @@ activate = function()
 
         task.spawn(function()
             flashScreen()
-            cameraShake(0.25, 0.2)
+            cameraShake(0.4, 0.2)
         end)
 
         startCloneSpawning()
@@ -1819,7 +1810,7 @@ deactivate = function()
             pcall(function() swoosh:Stop() end)
         end
 
-        task.spawn(function() cameraShake(0.2, 0.15) end)
+        task.spawn(function() cameraShake(0.35, 0.15) end)
         atualizarBotaoUI()
     end, function(e) return e end)
 
@@ -2066,7 +2057,7 @@ end
 --=============================================================
 print("✨ SANDEVISTAN v4.10 — EDGERUNNERS EDITION")
 print("[Sandevistan] F ou clique: liga/desliga")
-print("[Sandevistan] Duração: 3.5s | Velocidade: 28")
-print("[Sandevistan] Clones: opacos, cor fixa por clone (gradiente)")
-print("[Sandevistan] FOV kick: 70 -> 100 na ativação")
+print("[Sandevistan] Duração: 8s | Velocidade: 18")
+print("[Sandevistan] Clones: em cima do player, cores em LOOP suave")
+print("[Sandevistan] FOV kick: 70 -> 100 na ativação (0.6s)")
 print("[Sandevistan] Menu: SANDEVISTAN | CHAR PERM | SHIFTLOCK")
