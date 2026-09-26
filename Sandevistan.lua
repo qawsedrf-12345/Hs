@@ -1,4 +1,4 @@
---=============================================================
+p--=============================================================
 -- SANDEVISTAN v4.10 — EDGERUNNERS EDITION
 -- Velocidade: 28 | Duração: 3.5s | Tecla: F | Char: toggle
 -- Áudio 1 (swoosh): 97013920026153 | speed 1 | vol 0.15 | end 0.7
@@ -120,9 +120,9 @@ local BOOSTED_SPEED         = 20
 local SANDEVISTAN_DURATION  = 3.5
 
 -- Configurações dos clones
-local CLONE_INTERVAL        = 0.05
-local MAX_CLONES            = 70
-local CLONE_TRANSPARENCY    = 0.5
+local CLONE_INTERVAL        = 0.025
+local MAX_CLONES            = 140
+local CLONE_TRANSPARENCY    = 0
 local CLONE_HIGHLIGHT_FILL  = 0.0
 local CLONE_HIGHLIGHT_LINE  = 0.2
 local CLONE_MATERIAL        = Enum.Material.Neon
