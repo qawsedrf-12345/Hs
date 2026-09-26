@@ -3,7 +3,8 @@
 -- Velocidade: 28 | Duração: 3.5s | Tecla: F | Char: toggle
 -- Áudio 1 (swoosh): 97013920026153 | speed 1 | vol 0.15 | end 0.7
 -- Áudio 2 (main):   130840290979991 | speed 0.5 | vol 1 | start 1.9
--- Clones: opacos, cor fixa por clone (gradiente contínuo, sem tween)
+-- Clones: opacos, cor fixa por clone (gradiente contínuo)
+-- Suavização proporcional ao nº de clones (menos clones = menos suavização)
 -- FOV kick: 70 -> 100 na ativação
 -- Menu: SANDEVISTAN | CHAR PERM | SHIFTLOCK
 --=============================================================
@@ -120,12 +121,19 @@ local BOOSTED_SPEED         = 28
 local SANDEVISTAN_DURATION  = 3.5
 
 -- Configurações dos clones
-local CLONE_INTERVAL        = 0.05
-local MAX_CLONES            = 30
+local CLONE_INTERVAL        = 0.1
+local MAX_CLONES            = 40
 local CLONE_TRANSPARENCY    = 0
 local CLONE_HIGHLIGHT_FILL  = 0.0
 local CLONE_HIGHLIGHT_LINE  = 0.2
 local CLONE_MATERIAL        = Enum.Material.Neon
+
+-- ✅ Suavização PROPORCIONAL ao nº de clones
+-- Quanto menos clones → menos suavização
+-- Quanto mais clones → mais suavização
+-- Ex.: 70 clones × 0.001 = 0.07s  |  10 clones = 0.01s  |  140 clones = 0.14s
+local COLOR_TRANSITION_PER_CLONE = 0.001
+local COLOR_TRANSITION_TIME      = MAX_CLONES * COLOR_TRANSITION_PER_CLONE
 
 -- Cooldown anti-spam
 local TOGGLE_COOLDOWN       = 0.3
@@ -189,6 +197,7 @@ local activeSeat            = nil
 local activeWeld            = nil
 local activeClones          = {}
 local cloneColorIndex       = 0
+local lastCloneColor        = nil
 local connections           = {}
 local morphUserId           = nil
 local running               = true
@@ -1433,7 +1442,7 @@ local function cameraShake(duration, magnitude)
 end
 
 --=============================================================
--- ✨ CLONES (cor fixa por clone — gradiente contínuo)
+-- ✨ CLONES (cor fixa por clone — gradiente contínuo + suavização escalonada)
 --=============================================================
 local function createClone()
     if not isActive then return end
@@ -1441,7 +1450,7 @@ local function createClone()
     if not character:FindFirstChild("HumanoidRootPart") then return end
     if not isCharacterMoving() then return end
 
-    -- ✅ FIX: recicla o clone mais antigo em vez de parar de criar
+    -- Recicla o clone mais antigo em vez de parar de criar
     if #activeClones >= MAX_CLONES then
         local oldest = table.remove(activeClones, 1)
         if oldest and oldest.clone and oldest.clone.Parent then
@@ -1470,12 +1479,17 @@ local function createClone()
     local humanoidClone = clone:FindFirstChildOfClass("Humanoid")
     if humanoidClone then humanoidClone:Destroy() end
 
-    -- Cor FIXA por clone (gradiente contínuo, sem tween)
-    -- ✅ FIX: índice cicla infinitamente (1..MAX_CLONES)
+    -- Índice cicla infinitamente (1..MAX_CLONES)
     cloneColorIndex = (cloneColorIndex % MAX_CLONES) + 1
     local step = (cloneColorIndex - 1) % MAX_CLONES
     local t = step / (MAX_CLONES - 1)
     local corDoClone = getGradientColor(t)
+
+    -- ✅ Suavização escalonada: parte da cor anterior e faz tween para a nova
+    local corAnterior = lastCloneColor or corDoClone
+    lastCloneColor = corDoClone
+
+    local partsToTween = {}
 
     for _, obj in ipairs(clone:GetDescendants()) do
         if obj:IsA("BasePart") then
@@ -1483,8 +1497,9 @@ local function createClone()
             obj.CanCollide = false
             obj.Material = CLONE_MATERIAL
             obj.Transparency = CLONE_TRANSPARENCY
-            obj.Color = corDoClone
+            obj.Color = corAnterior
             obj.Reflectance = 0
+            table.insert(partsToTween, obj)
         elseif obj:IsA("Decal") then
             obj.Transparency = 1
         elseif obj:IsA("Clothing") then
@@ -1492,9 +1507,10 @@ local function createClone()
         elseif obj:IsA("Accessory") then
             for _, part in ipairs(obj:GetDescendants()) do
                 if part:IsA("BasePart") then
-                    part.Color = corDoClone
+                    part.Color = corAnterior
                     part.Transparency = CLONE_TRANSPARENCY
                     part.Material = CLONE_MATERIAL
+                    table.insert(partsToTween, part)
                 elseif part:IsA("Decal") then
                     part.Transparency = 1
                 end
@@ -1503,8 +1519,8 @@ local function createClone()
     end
 
     local highlight = Instance.new("Highlight")
-    highlight.FillColor = corDoClone
-    highlight.OutlineColor = corDoClone
+    highlight.FillColor = corAnterior
+    highlight.OutlineColor = corAnterior
     highlight.FillTransparency = CLONE_HIGHLIGHT_FILL
     highlight.OutlineTransparency = CLONE_HIGHLIGHT_LINE
     highlight.DepthMode = Enum.HighlightDepthMode.Occluded
@@ -1521,6 +1537,29 @@ local function createClone()
         trailParticle.Speed = NumberRange.new(0, 2)
         trailParticle.SpreadAngle = Vector2.new(360, 360)
         trailParticle.Parent = cloneRoot
+    end
+
+    -- ✅ Tween com duração escalonada pelo nº de clones
+    if COLOR_TRANSITION_TIME > 0 then
+        task.spawn(function()
+            if not clone.Parent then return end
+            local tweenInfo = TweenInfo.new(COLOR_TRANSITION_TIME, Enum.EasingStyle.Linear)
+            for _, part in ipairs(partsToTween) do
+                if part and part.Parent then
+                    pcall(function()
+                        TweenService:Create(part, tweenInfo, { Color = corDoClone }):Play()
+                    end)
+                end
+            end
+            if highlight and highlight.Parent then
+                pcall(function()
+                    TweenService:Create(highlight, tweenInfo, {
+                        FillColor = corDoClone,
+                        OutlineColor = corDoClone
+                    }):Play()
+                end)
+            end
+        end)
     end
 
     table.insert(activeClones, { clone = clone, highlight = highlight })
@@ -1732,6 +1771,7 @@ activate = function()
     pendingActivation = false
     isActive = true
     cloneColorIndex = 0
+    lastCloneColor = nil
     captureOriginalArchivable()
 
     local ok, err = xpcall(function()
@@ -2073,6 +2113,7 @@ end
 print("✨ SANDEVISTAN v4.10 — EDGERUNNERS EDITION")
 print("[Sandevistan] F ou clique: liga/desliga")
 print("[Sandevistan] Duração: 3.5s | Velocidade: 28")
-print("[Sandevistan] Clones: opacos, cor fixa por clone (gradiente)")
+print("[Sandevistan] Clones: cor fixa + suavização escalonada")
+print(string.format("[Sandevistan] MaxClones=%d | Suavização=%.3fs", MAX_CLONES, COLOR_TRANSITION_TIME))
 print("[Sandevistan] FOV kick: 70 -> 100 na ativação")
 print("[Sandevistan] Menu: SANDEVISTAN | CHAR PERM | SHIFTLOCK")
