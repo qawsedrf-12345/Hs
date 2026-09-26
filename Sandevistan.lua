@@ -114,7 +114,7 @@ local TOGGLE_KEY            = Enum.KeyCode.F
 
 -- Velocidade do jogador (studs/s)
 local NORMAL_SPEED          = 16
-local BOOSTED_SPEED         = 28
+local BOOSTED_SPEED         = 20
 
 -- Duração do efeito (segundos)
 local SANDEVISTAN_DURATION  = 3.5
@@ -144,7 +144,7 @@ local AUDIO_SWOOSH_END      = 0.7
 
 local AUDIO_MAIN_ID         = "rbxassetid://130840290979991"
 local AUDIO_MAIN_SPEED      = 0.5
-local AUDIO_MAIN_VOLUME     = 1
+local AUDIO_MAIN_VOLUME     = 2
 local AUDIO_MAIN_START      = 1.9
 
 -- FOV kick
