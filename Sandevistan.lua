@@ -117,7 +117,7 @@ local NORMAL_SPEED          = 16
 local BOOSTED_SPEED         = 28
 
 -- Duração do efeito (segundos)
-local SANDEVISTAN_DURATION  = 3.5
+local SANDEVISTAN_DURATION  = 7.0
 
 -- Configurações dos clones
 local CLONE_INTERVAL        = 0.05
@@ -143,7 +143,7 @@ local AUDIO_SWOOSH_VOLUME   = 0.15
 local AUDIO_SWOOSH_END      = 0.7
 
 local AUDIO_MAIN_ID         = "rbxassetid://130840290979991"
-local AUDIO_MAIN_SPEED      = 0.5
+local AUDIO_MAIN_SPEED      = 0.2
 local AUDIO_MAIN_VOLUME     = 1
 local AUDIO_MAIN_START      = 1.9
 
